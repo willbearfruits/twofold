@@ -73,8 +73,9 @@ FreeRTOS tick: 1000 Hz. `CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0`, WiFi/BT/LWIP/esp_t
 * `soc/esp32s3/include/soc/clk_tree_defs.h`: I2S clock sources are **PLL_F160M**, **XTAL (40 MHz)** and
   **EXTERNAL** (MCLK pin as input). There is no APLL on the S3.
 * `hal/esp32s3/include/hal/i2s_ll.h`: `MCLK = I2S_SCLK / (N + b/a)`, with N ≤ 255 and a/b ≤ 511. The fraction is
-  realised by a pulse-swallowing pattern (`div_x/div_y/div_z/div_yn1`). The output therefore has
-  deterministic period jitter of ±1 source clock.
+  realised by a pulse-swallowing pattern (`div_x/div_y/div_z/div_yn1`). Every MCLK period is N or N+1
+  source cycles, so period jitter is 1 source cycle peak-to-peak (6.25 ns at 160 MHz). The time-interval
+  error (TIE) stays below one cycle peak-to-peak (6.12 ns at MCLK).
 * `BCLK = MCLK / bclk_div` (integer). In slave mode the driver forces an internal `bclk_div ≥ 8` (internal
   oversampling of BCK only).
 
@@ -86,15 +87,26 @@ For 48 kHz we need MCLK = k·fs. Neither source divides cleanly:
 | PLL_F160M | 256 | 12.288 MHz | 13 + 1/48 | **256 kHz** | 6.25 ns (7.7 % of T_MCLK) |
 | PLL_F160M | 384 | 18.432 MHz | 8 + 49/72 | 256 kHz | 6.25 ns (11.5 %) |
 | PLL_F160M | 512 | 24.576 MHz | 6 + 49/96 | 256 kHz | 6.25 ns (15.4 %) |
-| XTAL 40 MHz | 256 | 12.288 MHz | 3 + 49/192 | **64 kHz** | 25 ns (31 %) |
+| XTAL 40 MHz | 256 | 12.288 MHz | 3 + 49/192 | **64 kHz** | 25 ns (30.7 %) |
+
+(XTAL at 512·fs is impossible: IDF requires source > 1.99 × MCLK.)
 
 Decision: **PLL_F160M, MCLK = 256·fs, 32-bit slots, BCLK = MCLK/4 = 64·fs exactly.**
 * The fractional pattern repeats at 256 kHz, so the clock error is a deterministic sawtooth whose spurs sit at
   256 kHz and its harmonics, far above the audio band. In the PCM1808 these components produce sidebands
   around 256 kHz that the decimation filter (stopband ≥ 0.6·fs) removes. The PCM5102A is run from its
   **internal PLL locked to BCK** (SCK tied to GND), and that PLL's loop filter attenuates the 256 kHz phase
-  sawtooth further. 256·fs gives the smallest relative step (6.25 ns of an 81 ns period) and the cleanest duty
-  cycle (6/13 to 7/13).
+  sawtooth further.
+* Why 256·fs rather than 384/512·fs: BCK and the PCM1808 sampling instants show *identical* jitter for all three
+  multiples (1.80 ns rms, lines at n·256 kHz). Their edges are simply the source edges nearest the ideal times, so
+  only the source clock matters. 256·fs still wins on MCLK itself: lowest frequency, smallest relative step
+  (6.25 ns of 81 ns) and best duty (46.2–53.8 %, i.e. 6/13–7/13).
+* Quantified (`docs/clocking/clock_jitter.md`): the raw jitter SNR limit for a full-scale 20 kHz sine is 72.9 dB.
+  After the PCM1808 decimation filter (≥65 dB stopband) the in-band limit is 137.9 dB. The DAC side, assuming a
+  50 kHz PCM5102A PLL bandwidth (not published), gives 103.2 dB with no in-band spurs (all sidebands at 256 kHz ± f0).
+  XTAL@256fs: 7.22 ns rms, 64 kHz lines: 125.9 dB ADC / 68.6 dB DAC. External 1 ps rms oscillator: 138 dB raw.
+* The S3 hardware also has a 240 MHz PLL source that IDF 5.5.1 does not expose (~1.19 ns rms, 384 kHz lines, ≈10 dB
+  better after the DAC PLL). It would need a register poke and is noted as a future option only.
 * XTAL looks attractive (a crystal is cleaner than the PLL), but at 40 MHz the pattern fundamental drops to 64 kHz
   and each step is 4× larger, so it loses.
 * `tools/clock_jitter.py` simulates the actual IDF divider sequence for every option and reports the TIE spectrum.
@@ -293,5 +305,7 @@ therefore enforced by *when* we write:
 ## 14. Deviations / log
 * (initial) `usbdev` instead of `usb` component name (IDF name clash).
 * (initial) esp_tinyusb not used (no audio-class config); TinyUSB used directly with own config.
+* Clock analysis (tools/clock_jitter.py) confirmed the §4.2 table and corrected the *rationale*: BCK jitter is
+  independent of the MCLK multiple. The decision (PLL_F160M, 256·fs) is unchanged.
 * (initial) The S3 I2C controller has no DMA. The display uses the IDF interrupt-driven asynchronous I2C master
   on core 0 with a dirty-band flush. This meets "never block audio" (different core, no shared locks) without DMA.
