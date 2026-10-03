@@ -1,0 +1,8 @@
+CompileFlags:
+  Add:
+    - -std=c11
+    - -I/home/glitchesom/Projects/shitface/firmware/components/params/include
+    - -I/home/glitchesom/Projects/shitface/firmware/components/dsp/include
+    - -I/home/glitchesom/Projects/shitface/firmware/components/gfx/include
+    - -I/home/glitchesom/Projects/shitface/firmware/components/ui/include
+    - -I/home/glitchesom/Projects/shitface/firmware/components/board/include

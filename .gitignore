@@ -1,0 +1,12 @@
+# ESP-IDF
+firmware/build/
+firmware/build_*/
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/managed_components/
+firmware/dependencies.lock
+# host builds
+host/**/build/
+__pycache__/
+*.pyc
+.cache/

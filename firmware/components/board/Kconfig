@@ -1,0 +1,45 @@
+menu "TWOFOLD board"
+
+    choice TWOFOLD_CLOCK
+        prompt "Audio clock mode"
+        default TWOFOLD_CLOCK_INTERNAL
+        help
+            INTERNAL: ESP32-S3 is I2S master and generates MCLK (256fs) from PLL_F160M for the PCM1808.
+            EXT_OSC (low-jitter): a 12.288 MHz oscillator clocks PCM1808 SCKI and PCM5102A SCK, the PCM1808
+            is master (MD1=MD0=1) and the ESP32-S3 + PCM5102A are I2S slaves. See README "Clocking".
+
+        config TWOFOLD_CLOCK_INTERNAL
+            bool "Internal (ESP32-S3 master, PLL-derived MCLK)"
+        config TWOFOLD_CLOCK_EXT_OSC
+            bool "Low-jitter (external 12.288 MHz oscillator, PCM1808 master)"
+    endchoice
+
+    choice TWOFOLD_OLED
+        prompt "Default OLED controller"
+        default TWOFOLD_OLED_SSD1306
+        help
+            Default controller. It can also be changed at runtime in Settings > OLED type (stored in NVS).
+        config TWOFOLD_OLED_SSD1306
+            bool "SSD1306"
+        config TWOFOLD_OLED_SH1106
+            bool "SH1106 (132-column RAM, column offset 2)"
+    endchoice
+
+    config TWOFOLD_OLED_ADDR
+        hex "OLED I2C address"
+        default 0x3C
+
+    config TWOFOLD_I2C_FAST
+        bool "Run OLED I2C at 1 MHz (out of SSD1306 spec, works on most modules)"
+        default n
+
+    config TWOFOLD_ENC_COUNTS_PER_DETENT
+        int "Encoder quadrature counts per detent"
+        default 4
+        range 1 4
+
+    config TWOFOLD_ENC_REVERSE
+        bool "Reverse encoder direction"
+        default n
+
+endmenu

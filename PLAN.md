@@ -1,0 +1,297 @@
+# TWOFOLD — 2-in / 2-out USB audio interface on ESP32-S3 — PLAN
+
+Status: living document. Deviations from the original plan are logged in §14.
+
+## 1. Product summary
+
+TWOFOLD is a class-compliant USB-C audio interface: 48 kHz / 24-bit, stereo in (PCM1808) and stereo
+out (PCM5102A), plus a USB-MIDI port. It has an onboard 32-bit float DSP chain (5-band parametric EQ,
+saturation, chorus/ensemble, stereo/ping-pong delay, plate reverb, bus compressor, safety limiter), a 128×64 OLED
+with an encoder, and opt-in WiFi (web editor, OTA) and BLE-MIDI. Radios are off by default ("Studio Mode").
+
+## 2. Architecture
+
+```
+            ┌──────────────────────────── core 1 (audio only) ───────────────────────────┐
+ PCM1808 ──▶│ I2S RX DMA ─▶ audio_task (prio 22, IRAM) ─▶ I2S TX DMA ─▶ PCM5102A          │
+  (ADC)     │                │  ▲  dsp_engine_process(): int32→float, chain, dither    │
+            │      tud_audio_read │ tud_audio_write  (lock-free SPSC TinyUSB FIFOs)       │
+            └────────────────┼──┼──────────────────────────────────────────────────────┘
+            ┌────────────────┼──┼───────────── core 0 ───────────────────────────────────┐
+  USB host ◀┼─▶ TinyUSB task (prio 20): UAC2 + MIDI, FIFO_COUNT feedback, IN flow ctrl   │
+            │   ctrl task (prio 8): MIDI CC ⇄ params, BLE-MIDI bridge                     │
+            │   ui task (prio 5, 60 Hz): input → ui model → gfx → OLED (async I2C)        │
+            │   storage task (prio 3): debounced NVS writes in audio-safe windows         │
+            │   net (WiFi/httpd/DNS/OTA) and NimBLE host: only exist when enabled         │
+            └──────────────────────────────────────────────────────────────────────────────┘
+```
+
+Shared state goes through `params` (an X-macro table that is the single source of truth for ~90
+parameters). Values are 32-bit floats written with plain aligned stores, which are atomic on Xtensa.
+Each consumer (store, MIDI, web, BLE, UI) has its own atomic dirty bitmask. The audio engine reads
+parameter targets once per block and smooths them internally. No locks are shared with the audio task.
+
+Modules (ESP-IDF components under `firmware/components/`):
+
+| component | role | host-portable |
+|---|---|---|
+| `board` | the single pin/config header + Kconfig (clock mode, OLED type) | yes (header) |
+| `params` | parameter table, ranges, units, formatting, MIDI CC map, presets (de)serialisation, factory presets | yes |
+| `dsp` | all DSP blocks + `dsp_engine` (chain, smoothing, meters, profiling, spectrum tap) | yes |
+| `audio` | I2S full-duplex setup, both clock modes, audio task, XSMT pop control | no |
+| `usbdev` | TinyUSB config, UAC2+MIDI composite descriptors, UAC2 control requests, USB-MIDI | no |
+| `gfx` | 1-bit framebuffer, primitives, custom pixel fonts, dithers | yes |
+| `ui` | screens, menus, tweening, gestures, acceleration, screensaver | yes |
+| `display` | SSD1306 / SH1106 driver, dirty-band flush, brightness curve | no |
+| `input` | PCNT quadrature encoder + debounced switch | no |
+| `storage` | NVS settings + 8 presets, deferred/audio-safe writes | no |
+| `net` | WiFi AP/STA, captive portal DNS, httpd + embedded web app, OTA | no |
+| `ble` | NimBLE BLE-MIDI peripheral | no |
+| `led` | WS2812 status LED (RMT) | no |
+
+The project's USB component is named `usbdev`, not `usb`, because IDF already ships a component called `usb`
+(it holds the PHY driver we need), and a same-named project component would shadow it.
+
+## 3. Task / core layout
+
+| task | core | prio | stack | period | notes |
+|---|---|---|---|---|---|
+| audio | 1 | 22 | 6 KB (internal) | I2S block (32 frames = 0.667 ms) | only task on core 1 besides IDF idle/ipc |
+| tinyusb (`tud_task`) | 0 | 20 | 4 KB | event driven | ISO ISR-path copies into FIFOs |
+| ctrl (MIDI/BLE bridge) | 0 | 8 | 4 KB | 2 ms | |
+| ui + display | 0 | 5 | 6 KB | 16.7 ms (60 fps target, ≥30 fps guaranteed) | I2C async, never touches audio |
+| input | 0 | 9 | 3 KB | 1 ms poll | PCNT read, switch debounce, timestamps |
+| storage | 0 | 3 | 4 KB | 250 ms | flash writes only in "audio-safe windows" |
+| httpd / dns / wifi | 0 | 4–5 | per IDF | — | created on enable, deleted on disable |
+| NimBLE host | 0 | 5 | 4 KB | — | created on enable, deleted on disable |
+
+FreeRTOS tick: 1000 Hz. `CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0`, WiFi/BT/LWIP/esp_timer pinned to core 0.
+
+## 4. Clocking strategy (highest priority)
+
+### 4.1 What the ESP32-S3 can do (from IDF v5.5.1 source)
+* `soc/esp32s3/include/soc/clk_tree_defs.h`: I2S clock sources are **PLL_F160M**, **XTAL (40 MHz)** and
+  **EXTERNAL** (MCLK pin as input). There is no APLL on the S3.
+* `hal/esp32s3/include/hal/i2s_ll.h`: `MCLK = I2S_SCLK / (N + b/a)`, with N ≤ 255 and a/b ≤ 511. The fraction is
+  realised by a pulse-swallowing pattern (`div_x/div_y/div_z/div_yn1`). The output therefore has
+  deterministic period jitter of ±1 source clock.
+* `BCLK = MCLK / bclk_div` (integer). In slave mode the driver forces an internal `bclk_div ≥ 8` (internal
+  oversampling of BCK only).
+
+### 4.2 Choosing the cleanest internal configuration
+For 48 kHz we need MCLK = k·fs. Neither source divides cleanly:
+
+| source | k | MCLK | divider | pattern fundamental (= gcd(src, MCLK)) | TIE step |
+|---|---|---|---|---|---|
+| PLL_F160M | 256 | 12.288 MHz | 13 + 1/48 | **256 kHz** | 6.25 ns (7.7 % of T_MCLK) |
+| PLL_F160M | 384 | 18.432 MHz | 8 + 49/72 | 256 kHz | 6.25 ns (11.5 %) |
+| PLL_F160M | 512 | 24.576 MHz | 6 + 49/96 | 256 kHz | 6.25 ns (15.4 %) |
+| XTAL 40 MHz | 256 | 12.288 MHz | 3 + 49/192 | **64 kHz** | 25 ns (31 %) |
+
+Decision: **PLL_F160M, MCLK = 256·fs, 32-bit slots, BCLK = MCLK/4 = 64·fs exactly.**
+* The fractional pattern repeats at 256 kHz, so the clock error is a deterministic sawtooth whose spurs sit at
+  256 kHz and its harmonics, far above the audio band. In the PCM1808 these components produce sidebands
+  around 256 kHz that the decimation filter (stopband ≥ 0.6·fs) removes. The PCM5102A is run from its
+  **internal PLL locked to BCK** (SCK tied to GND), and that PLL's loop filter attenuates the 256 kHz phase
+  sawtooth further. 256·fs gives the smallest relative step (6.25 ns of an 81 ns period) and the cleanest duty
+  cycle (6/13 to 7/13).
+* XTAL looks attractive (a crystal is cleaner than the PLL), but at 40 MHz the pattern fundamental drops to 64 kHz
+  and each step is 4× larger, so it loses.
+* `tools/clock_jitter.py` simulates the actual IDF divider sequence for every option and reports the TIE spectrum.
+  The table above is reproduced by that script (§12).
+
+### 4.3 Low-jitter mode (build-time: `CONFIG_TWOFOLD_CLOCK_EXT_OSC`)
+A 12.288 MHz CMOS oscillator (e.g. SiT1602/ECS-2520MV, ±25 ppm, < 1 ps rms phase jitter) drives
+**PCM1808 SCKI** and **PCM5102A SCK**, each through a 33 Ω series resistor near the oscillator.
+PCM1808 `MD1=MD0=1` makes it **master at 256·fs**: it outputs BCK = 64·fs and LRCK = fs, which go to the ESP32 (I2S **slave**, both TX and RX)
+and to the PCM5102A (slave, SCK present so it bypasses its PLL). The ESP32 MCLK pin is unused (GPIO left as input).
+Both converters then run from a crystal oscillator with no fractional division anywhere.
+
+### 4.4 Full duplex, one clock domain
+One I2S peripheral (I2S0) runs with TX and RX channels created together (`i2s_new_channel(&cfg, &tx, &rx)`),
+sharing BCK/WS in both modes. The audio task blocks on `i2s_channel_read()` for one block, which paces the whole
+pipeline to the converter clock. It then processes and `i2s_channel_write()`s exactly one block into a TX ring
+pre-filled with 2 blocks of silence. Because TX and RX run off the same BCK, the ring can neither drift nor
+underflow in steady state.
+
+### 4.5 USB rate feedback follows whichever clock is master
+UAC2 asynchronous mode, using TinyUSB 0.21's `AUDIO_FEEDBACK_METHOD_FIFO_COUNT` on the OUT FIFO and its
+level-based IN flow control (47/48/49-frame packets). The FIFOs are filled and drained by the audio task, which is
+paced only by the I2S clock. Both loops therefore regulate against the actual converter clock, whether that is the
+S3 PLL (internal mode) or the external oscillator (low-jitter mode), with no code change and nothing
+mode-specific to calibrate. The OUT FIFO targets half-full (4 ms). Feedback is clamped to ±1 frame.
+
+## 5. Pin map (single source: `firmware/components/board/include/board_config.h`)
+
+Waveshare ESP32-S3-Zero (ESP32-S3FH4R2) exposes GPIO1–18, 21 (onboard WS2812), 38–45, 43/44 (UART0), 19/20 (USB).
+GPIO33–37 are not broken out. Avoided: strapping pins 0/3/45/46, USB 19/20, UART0 43/44 (kept for logs),
+JTAG 39–42 (kept free).
+
+| signal | GPIO | dir | notes |
+|---|---|---|---|
+| OLED SDA | 1 | io | 4.7 kΩ pull-up to 3V3 (most modules have them) |
+| OLED SCL | 2 | out | 400 kHz default, 1 MHz option (`CONFIG_TWOFOLD_I2C_FAST`) |
+| I2S MCLK | 4 | out | → PCM1808 SCKI (internal clock mode only) |
+| I2S BCK | 5 | out / in (ext osc) | → PCM5102A BCK, PCM1808 BCK |
+| I2S LRCK | 6 | out / in (ext osc) | → PCM5102A LCK, PCM1808 LRC |
+| I2S DOUT | 7 | out | → PCM5102A DIN |
+| I2S DIN | 8 | in | ← PCM1808 DOUT |
+| DAC XSMT | 9 | out | PCM5102A soft-mute: low during boot/clock changes |
+| ENC A | 10 | in | PCNT ch0, pull-up, 10 nF to GND recommended |
+| ENC B | 11 | in | PCNT ch1, pull-up, 10 nF to GND recommended |
+| ENC SW | 12 | in | to GND, pull-up, debounced in firmware |
+| WS2812 | 21 | out | onboard status LED (very dim) |
+| UART0 TX/RX | 43/44 | — | console/logs (USB PHY belongs to TinyUSB) |
+| spare | 13–18, 38 | — | |
+
+Fixed straps: PCM1808 `FMT=0` (I2S), `MD1=MD0=0` (slave) or `=1/1` (master 256fs, low-jitter mode).
+PCM5102A: `FMT=0` (I2S), `FLT=0` (normal latency FIR), `DEMP=0`, `SCK=GND` (internal) or oscillator (low-jitter).
+
+## 6. Memory budget
+
+ESP32-S3: 512 KB SRAM shared by IRAM and DRAM, plus 2 MB quad PSRAM at 80 MHz.
+A PSRAM cache-line fill (64 B over QSPI) costs about 1.6–2 µs, roughly 450 CPU cycles. Anything accessed by many
+read/write streams per sample (the reverb tank) must therefore stay in internal RAM.
+
+| item | where | size | why |
+|---|---|---|---|
+| DSP code (`dsp` component, `noflash` linker mapping) + audio task + I2S ISR | IRAM | ~28 KB | no flash-cache misses in the audio path |
+| Reverb tank (Dattorro, scaled 29761 → 48000 Hz, ~36.3k samples) | internal | ~146 KB | ~38 access streams/sample would cost ~22 % CPU from PSRAM |
+| Reverb pre-delay (150 ms mono) | PSRAM | 29 KB | 2 sequential streams: cheap |
+| Delay lines (2 × 1.55 s) | PSRAM | 2 × 298 KB | ≤6 sequential streams; est. ≤4 % CPU in cache misses |
+| Chorus lines (2 × 2048) | internal | 16 KB | |
+| Engine scratch, smoothers, limiter, oversampler | internal | ~12 KB | |
+| I2S DMA (3 × 32 frames × 8 B × 2 dirs) | internal | 1.5 KB | |
+| TinyUSB FIFOs (OUT 8 ms, IN 8 ms) | internal | ~7 KB | |
+| Framebuffers (front/back) + spectrum FFT (1024 cplx) | internal | 2 KB + 12 KB | |
+| WiFi (when enabled) | internal ~55 KB + PSRAM (`SPIRAM_TRY_ALLOCATE_WIFI_LWIP`) | | allocated only on enable |
+| NimBLE (when enabled) | internal ~35 KB + PSRAM (`MEM_ALLOC_MODE_EXTERNAL`) | | allocated only on enable |
+
+Big DSP buffers are allocated at boot, before any radio exists, so later radio enables cannot fragment them.
+Measured free-heap figures are in the README (diagnostics screen and `idf.py size`).
+
+## 7. CPU budget at 48 kHz (240 MHz → 5000 cycles per stereo frame = 100 % of one core)
+
+Estimates (est.) are replaced by measurements in README §Measurements.
+
+| block | est. cycles/frame | est. % core |
+|---|---|---|
+| I/O conversion, input gain, peak/clip, meters | 60 | 1.2 |
+| EQ: 10 TDF-II biquads + trims (+ coefficient re-design while moving) | 150 | 3.0 |
+| Saturation: 4× oversampled (2-stage polyphase half-band), asym. waveshaper, 2 ch | 300 | 6.0 |
+| Chorus/ensemble: 3 voices × 2 ch, cubic interpolation | 150 | 3.0 |
+| Delay: 2 heads (+ crossfade heads), filtered feedback, PSRAM | 300 | 6.0 |
+| Plate reverb (Dattorro, modulated) | 400 | 8.0 |
+| Bus compressor (stereo-linked, log-domain, soft knee) | 120 | 2.4 |
+| Monitor mix + master volume + lookahead limiter | 150 | 3.0 |
+| TPDF dither × 4 channels, float→int24 | 40 | 0.8 |
+| **total, everything on** | **≈1670** | **≈33 %** (budget: < 60 %) |
+
+Measurement: `dsp_engine` brackets each stage with `esp_cpu_get_cycle_count()` and accumulates per-block
+avg/max over 1 s windows. These are shown on the hidden Diagnostics screen and in the web API.
+
+## 8. Audio path details
+* Format: USB 24-bit in 4-byte subslots (left-justified), I2S 32-bit slots, so all I/O is int32 left-justified.
+  Internally float32 at 1.0 = 0 dBFS.
+* Playback: USB → EQ (in trim, 5 bands, out trim) → Saturation → Chorus → Delay → Reverb → Bus Comp →
+  [direct monitor blend] → master volume → limiter → TPDF dither → 24-bit → DAC.
+* Record: ADC → input mode (stereo/mono/L/R) → input gain → peak/clip detect → TPDF dither (bypassed when
+  bit-transparent at 0 dB) → USB.
+* Direct monitor: crossfade knob (0 % = playback only, 50 % = both −3 dB, 100 % = input only, equal-power).
+  The input is taken after input gain. Path option: `DRY` (enters after the effects) or `THRU FX` (enters before
+  the EQ). Latency is ADC → DAC through the I2S blocks only, with no USB in the loop.
+* Smoothing: every continuous parameter has a one-pole smoother at block rate, interpolated linearly per sample
+  for gains. Biquad coefficients are re-designed per block from smoothed (log f, dB, log Q) while moving.
+  Discrete changes (delay sync/time, pre-delay, effect on/off, enums) use internal crossfades: two read heads or
+  wet/dry equal-power fades. Preset loads raise the glide time to 150 ms (preset epoch), so presets crossfade.
+* Safety limiter: 1.0 ms lookahead, peak-hold min filter, smoothed release (gain computed from a
+  sliding-window max over the lookahead window, then a 2-stage smoothing), ceiling −0.3 dBFS default. It is
+  bit-identical (gain = 1) when the signal stays below the threshold.
+* Dither: TPDF (two xorshift32 uniforms, ±1 LSB at 24-bit), independent per channel.
+* Denormals: tiny alternating DC offsets in recursive structures, plus flush in smoothers.
+
+## 9. USB
+* TinyUSB 0.21 (`espressif/tinyusb`) driven directly. esp_tinyusb's generated `tusb_config.h` has no
+  audio class, so we provide our own `tusb_config.h` and init the PHY via `usb_new_phy()`.
+* Composite: IAD{ AC(clock source 48k fixed, IT USB-streaming→OT line out, IT line in→OT USB-streaming),
+  AS out (alt1 2ch/24bit, iso async EP 0x01 + feedback EP 0x81), AS in (alt1 2ch/24bit, iso async EP 0x82) }
+  + MIDI (AC + MS, bulk EP 0x03/0x83).
+* No USB feature-unit volume: the encoder is the hardware master volume, and the OS volume stays software
+  and bit-transparent at 100 %.
+* VID 0x303A (Espressif) with a placeholder PID. A real product must obtain its own PID.
+
+## 10. UI screen map (128×64, 1-bit)
+
+```
+BOOT (wordmark build-up, 1.2 s) → HOME
+HOME  rotate: volume (accelerated) · press: MENU · double: mute · long: (none)
+MENU  EQ · GAIN · EFFECTS · NETWORK · BLUETOOTH · PRESETS · SETTINGS        (long = back)
+  EQ        live curve + optional spectrum; rotate=band, press=edit FREQ→GAIN→Q, list: EQ on, trims
+  GAIN      input gain + live meter, input mode, monitor mix, monitor path
+  EFFECTS   SATURATE · CHORUS · DELAY · REVERB · COMPRESS (each: on/off, visualization, params)
+              saturate: transfer curve + live dot   chorus: voice LFO traces
+              delay: tap train (ping-pong alternates) reverb: pre-delay gap + decay envelope, damping
+              compress: transfer curve, threshold/knee, live GR bar
+  NETWORK   status, WiFi on/off, setup portal (SSID/pass/URL), forget network
+  BLUETOOTH BLE-MIDI on/off, status, name, help ("no audio over Bluetooth: ESP32-S3 has no BT Classic")
+  PRESETS   8 slots: load (crossfade), save (confirm), active/modified marker
+  SETTINGS  brightness, dim, screensaver, OLED type, limiter, MIDI, tempo, radios at boot, about
+              about → hold 3 s → DIAGNOSTICS (CPU per block, xruns, FIFO/feedback, heap, clock mode)
+SCREENSAVER  dim → slow drifting minimal glyph; any input wakes (wake input is swallowed)
+```
+Fonts: two custom bitmap fonts, a 5×7 label font (caps, digits, symbols) and a large proportional numeral
+font (~11×20) for values. Both are designed in-repo as ASCII art and converted at build time.
+Motion: critically damped tweens / ease-out cubic for screen slides (≈180 ms), value tweening, 60 fps target.
+
+## 11. Enclosure approach
+Parametric OpenSCAD (generated from Python per the enclosure skill), two parts (tray + lid) that print without supports, joined
+with M3 screws into heat-set inserts. Modules sit on internal standoffs (M2). The OLED sits behind a window with a
+recessed bezel, and the EC11 mounts through the lid (M7 nut, anti-rotation slot). Two 3.5 mm panel jacks for input,
+and the DAC module's jack or a panel jack for output (switch). The USB-C cutout is aligned to the S3-Zero. The S3
+antenna end faces the opposite end from the audio modules. Rubber-foot recesses. Matching knob. STLs + renders.
+
+## 12. Verification plan
+* `host/`: CMake project compiling `params`, `dsp`, `gfx`, `ui` for Linux.
+  * `twofold_sim`: renders every screen and transition to PNG and an animated GIF of a navigation script.
+  * `dsp_tests`: EQ magnitude vs analytic RBJ target (≤0.05 dB), reverb/delay impulse responses (plots + RT60),
+    saturation aliasing (sine sweep; image components ≤ −80 dBc in band), limiter ceiling (never above ceiling
+    with full-scale bursts and intersample tests), click detection on every parameter ramp (high-passed
+    residual vs threshold), dither statistics, bypass bit-exactness.
+* `tools/loopback.py`: latency (MLS cross-correlation), frequency response (log sweep), THD+N (1 kHz, notch),
+  noise floor (A-weighted). Run in Studio Mode vs WiFi-on and diff the results.
+* `tools/clock_jitter.py`: divider pattern / TIE spectrum analysis behind §4.2.
+* Firmware: `idf.py build` clean (-Werror on our components), `idf.py size` for memory.
+* CPU: on-device cycle counters. Before hardware exists, an estimate from instruction counts (§14).
+
+## 13. Assumptions
+1. The S3-Zero is the FH4R2 variant: quad PSRAM 2 MB at 80 MHz, 4 MB flash at 80 MHz QIO.
+2. PCM5102A module = common "GY-PCM5102" purple board: solder jumpers FLT/DEMP/XSMT/FMT on the back, and the
+   XSMT jumper is left open so GPIO9 can drive it. SCK pin on header.
+3. PCM1808 module exposes FMT, MD0, MD1 and SCKI, runs from 5 V (analog) / 3.3 V (digital) with an onboard LDO, and has
+   a line-level input (~1 Vrms full scale for 0 dBFS; no mic preamp).
+4. The OLED is the 4-pin I2C variant at address 0x3C. SH1106 modules have 132-column RAM (offset 2).
+5. The EC11 has 1 full quadrature cycle per detent (4 counts), 20 or 24 detents, with switch to GND.
+6. The host runs a normal OS mixer. On Windows, the in-box usbaudio2.sys (Win10 1703+).
+7. 48 kHz only. Supporting 44.1 kHz would need a different MCLK, and on the S3 PLL that is equally fractional;
+   OS resamplers handle it fine.
+8. NVS partition 24 KB; the flash supports neither auto-suspend nor a guaranteed erase time (see §8 storage policy).
+9. We cannot run code on real hardware here. CPU numbers are measured with cycle counters on device. Off
+   device, we report a QEMU instruction-count estimate if available, otherwise static estimates, clearly labelled.
+
+### Storage policy (flash vs. audio)
+On the ESP32-S3, any flash erase/program disables the cache and stalls both CPUs for its duration (page program ≈0.5 ms,
+sector erase ≈45 ms, up to 300+ ms). USB ISO packets arriving meanwhile are lost. "Audio never waits on NVS" is
+therefore enforced by *when* we write:
+* Changes mark state dirty. The storage task commits only in an **audio-safe window**: (a) no USB stream active
+  and output silent, or (b) output silent below −90 dBFS for ≥ 2 s, or (c) an explicit user save/preset store.
+  In case (c) the engine first ramps the output to digital silence (5 ms), the write happens, then it ramps back.
+* `I2S auto_clear` + `CONFIG_I2S_ISR_IRAM_SAFE`: if the CPU is stalled, the DAC receives zeros, not repeated
+  buffers.
+* A dirty state older than 10 min is committed with the same soft-mute protection.
+* Optional `CONFIG_SPI_FLASH_AUTO_SUSPEND` for flash chips that support it (documented, default off).
+
+## 14. Deviations / log
+* (initial) `usbdev` instead of `usb` component name (IDF name clash).
+* (initial) esp_tinyusb not used (no audio-class config); TinyUSB used directly with own config.
+* (initial) The S3 I2C controller has no DMA. The display uses the IDF interrupt-driven asynchronous I2C master
+  on core 0 with a dirty-band flush. This meets "never block audio" (different core, no shared locks) without DMA.
