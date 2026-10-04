@@ -361,7 +361,11 @@ void strip_draw(gfx_t *g, strip_t *s, int y)
         const gfx_font_t *fv = F_MED;
         if (ui_value_unit_width(v, u, F_MED) > s->cell_w - 5) {
             fv = F_SMALL;
-            if (ui_value_unit_width(v, u, F_SMALL) > s->cell_w - 4) u[0] = 0;
+            if (ui_value_unit_width(v, u, F_SMALL) > s->cell_w - 4) {
+                /* too wide for a unit: keep the magnitude visible ("1.94k", not a bare "1.94") */
+                if (!strcmp(u, "kHz")) snprintf(u, sizeof u, "k");
+                else u[0] = 0;
+            }
         }
         int vy = fv == F_MED ? y + 10 : y + 11;
         ui_value_unit(g, mid, vy, v, u, fv, GFX_CENTER, c);

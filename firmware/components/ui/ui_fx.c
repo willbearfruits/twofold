@@ -188,7 +188,7 @@ static void viz_delay(gfx_t *g, int x, int y, int w, int h, bool on)
         gfx_text(g, F_TINY, lx, by, tb, C_ON);
     } else {
         gfx_vline(g, t1, by, 5, C_ON);
-        gfx_text(g, F_TINY, t1 + 3, by, tb, C_ON);
+        gfx_text(g, F_TINY, t1 + 5, by, tb, C_ON);   /* clear of the 2 px tap bar */
     }
     if (pp) {
         gfx_text(g, F_TINY, x1 - 3, cy - hh - 1, "L", C_ON);
@@ -217,7 +217,7 @@ static void viz_reverb(gfx_t *g, int x, int y, int w, int h, bool on)
     gfx_hline(g, ax0, bot, onset - ax0, C_ON);
     gfx_vline(g, onset, top, eh + 1, C_ON);
     gfx_hline(g, onset, top, ax1 - onset + 1, C_ON);
-    gfx_dither(g, onset + 1, top + 1, ax1 - onset, eh, 8, C_ON);
+    gfx_dither(g, onset + 1, top + 1, ax1 - onset, eh, 3, C_ON);   /* early energy: light, like the tail */
     char b[12];
     snprintf(b, sizeof b, "%.0fMS", (double)pd);
     gfx_text(g, F_TINY, ax0, y + 1, b, C_ON);

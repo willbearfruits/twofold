@@ -216,11 +216,12 @@ static const list_item_t k_bt[] = {
     { LI_PARAM, 0, P_NET_BLE, 0, "BLE MIDI", NULL },
     { LI_INFO, 0, 0, 0, "STATUS", v_bstate },
     { LI_INFO, 0, 0, 0, "NAME", v_bname },
-    { LI_TEXT, 0, 0, 0, "BLUETOOTH CARRIES MIDI", NULL },
-    { LI_TEXT, 0, 0, 0, "ONLY. THERE IS NO AUDIO", NULL },
-    { LI_TEXT, 0, 0, 0, "OVER BLUETOOTH: THE", NULL },
-    { LI_TEXT, 0, 0, 0, "ESP32-S3 HAS NO", NULL },
-    { LI_TEXT, 0, 0, 0, "BLUETOOTH CLASSIC (A2DP).", NULL },
+    { LI_TEXT, 0, 0, 0, "BLUETOOTH IS FOR", NULL },
+    { LI_TEXT, 0, 0, 0, "MIDI CONTROL ONLY.", NULL },
+    { LI_TEXT, 0, 0, 0, "NO AUDIO OVER BT:", NULL },
+    { LI_TEXT, 0, 0, 0, "THE ESP32-S3 HAS", NULL },
+    { LI_TEXT, 0, 0, 0, "NO BT CLASSIC, SO", NULL },
+    { LI_TEXT, 0, 0, 0, "NO A2DP STREAMING.", NULL },
     { LI_TEXT, 0, 0, 0, "AUDIO GOES OVER USB.", NULL },
 };
 static list_t s_bt;

@@ -157,8 +157,8 @@ static void draw_ruler(gfx_t *g)
 }
 
 /* ---- meters ---- */
-#define MX0 20
-#define MW  98
+#define MX0 22
+#define MW  96
 
 static void draw_scale(gfx_t *g, int y)
 {
@@ -181,7 +181,7 @@ static void draw_meters(gfx_t *g)
 {
     const int yi = 38, yo = 55;
     gfx_text_ex(g, F_SMALL, UI_MX, yi + 1, "IN", 1, C_ON);
-    gfx_text_ex(g, F_SMALL, UI_MX, yo + 1, "OUT", 0, C_ON);
+    gfx_text_ex(g, F_SMALL, UI_MX - 1, yo + 1, "OUT", 0, C_ON);   /* tracking 0: keeps a 2 px gap to the bar */
     for (int c = 0; c < 2; c++) {
         ui_meter_bar(g, MX0, yi + c * 4, MW, 3, U.in_db[c], U.in_pk[c], false, true);
         ui_meter_bar(g, MX0, yo + c * 4, MW, 3, U.out_db[c], U.out_pk[c], false, true);

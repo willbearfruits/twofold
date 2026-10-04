@@ -230,8 +230,9 @@ static void draw_spectrum(gfx_t *g)
         int h = col[x] >> 2;
         if (h <= 0) continue;
         if (h > EQ_GH) h = EQ_GH;
-        gfx_dither(g, x, base - h, 1, h, 3, C_ON);
-        gfx_pixel(g, x, base - h, C_ON);
+        /* a faint texture under the curve: sparse dither, top edge only on even columns */
+        gfx_dither(g, x, base - h, 1, h, 1, C_ON);
+        if (!(x & 1)) gfx_pixel(g, x, base - h, C_ON);
     }
 }
 
