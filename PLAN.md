@@ -168,7 +168,7 @@ read/write streams per sample (the reverb tank) must therefore stay in internal 
 | item | where | size | why |
 |---|---|---|---|
 | DSP code (`dsp` component, `noflash` linker mapping) + audio task + I2S ISR | IRAM | ~28 KB | no flash-cache misses in the audio path |
-| Reverb tank (Dattorro, scaled 29761 → 48000 Hz, ~36.3k samples) | internal | ~146 KB | ~38 access streams/sample would cost ~22 % CPU from PSRAM |
+| Reverb tank (Dattorro, run at 24 kHz, ~18.2k samples) — *revised, see §14* | internal first (short lines), long delay lines spill to PSRAM if internal free < 96 KB reserve | ~73 KB | short allpasses always internal; long lines are sequential block copies |
 | Reverb pre-delay (150 ms mono) | PSRAM | 29 KB | 2 sequential streams: cheap |
 | Delay lines (2 × 1.55 s) | PSRAM | 2 × 298 KB | ≤6 sequential streams; est. ≤4 % CPU in cache misses |
 | Chorus lines (2 × 2048) | internal | 16 KB | |
@@ -193,11 +193,11 @@ Estimates (est.) are replaced by measurements in README §Measurements.
 | Saturation: 4× oversampled (2-stage polyphase half-band), asym. waveshaper, 2 ch | 300 | 6.0 |
 | Chorus/ensemble: 3 voices × 2 ch, cubic interpolation | 150 | 3.0 |
 | Delay: 2 heads (+ crossfade heads), filtered feedback, PSRAM | 300 | 6.0 |
-| Plate reverb (Dattorro, modulated) | 400 | 8.0 |
+| Plate reverb (Dattorro, modulated; tank at 24 kHz + half-band decimate/interpolate) | 250 (+~100 if long lines in PSRAM) | 5.0 (+2) |
 | Bus compressor (stereo-linked, log-domain, soft knee) | 120 | 2.4 |
 | Monitor mix + master volume + lookahead limiter | 150 | 3.0 |
 | TPDF dither × 4 channels, float→int24 | 40 | 0.8 |
-| **total, everything on** | **≈1670** | **≈33 %** (budget: < 60 %) |
+| **total, everything on** | **≈1520–1620** | **≈30–32 %** (budget: < 60 %) |
 
 Measurement: `dsp_engine` brackets each stage with `esp_cpu_get_cycle_count()` and accumulates per-block
 avg/max over 1 s windows. These are shown on the hidden Diagnostics screen and in the web API.
@@ -307,5 +307,18 @@ therefore enforced by *when* we write:
 * (initial) esp_tinyusb not used (no audio-class config); TinyUSB used directly with own config.
 * Clock analysis (tools/clock_jitter.py) confirmed the §4.2 table and corrected the *rationale*: BCK jitter is
   independent of the MCLK multiple. The decision (PLL_F160M, 256·fs) is unchanged.
+* (integration) **Static internal RAM was larger than budgeted.** `idf.py size` shows 124 KB DIRAM left after static
+  allocation with WiFi+BT linked (IRAM code incl. 58 KB of DSP). That cannot hold the 146 KB full-rate reverb tank and
+  still keep room for the radios. Fix: the tank runs at **24 kHz** (HB1 half-band decimator/interpolator, wet
+  bandwidth ~10 kHz like the EMT 250 / Lexicon 224, below where the damping already rolls off). That halves memory
+  (~73 KB) and tank CPU. Lines are allocated shortest-first through an allocator that keeps 96 KB internal free for
+  stacks + radios and spills only the long sequential delay lines to PSRAM. RT60 accuracy and decorrelation re-verified
+  (docs/test-results).
+* (integration) Parameter smoothing changed from one one-pole to **two cascaded one-poles** (zero initial slope):
+  the host click test caught onset transients on full-range jumps (volume 0 dB → −inf from MIDI/web). Saturation
+  tone/tilt coefficients are now interpolated per sample. All 78 parameters pass the click test.
+* (integration) The enclosure generator pipeline was replaced by one hand-written, self-contained parametric
+  `enclosure/twofold.scad` (the sourced module dimensions were kept) plus `enclosure/check.sh` (OpenSCAD intersection
+  checks graded by volume). Front height 26 mm (was 24) so the M3 insert bosses are long enough at the front.
 * (initial) The S3 I2C controller has no DMA. The display uses the IDF interrupt-driven asynchronous I2C master
   on core 0 with a dirty-band flush. This meets "never block audio" (different core, no shared locks) without DMA.
