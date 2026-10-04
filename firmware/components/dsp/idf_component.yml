@@ -1,0 +1,3 @@
+## esp-dsp is only used under ESP_PLATFORM (dsp_vec.h); host builds do not need it.
+dependencies:
+  espressif/esp-dsp: "^1.5"

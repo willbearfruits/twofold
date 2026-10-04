@@ -1,0 +1,123 @@
+# =====================================================================================
+# sdkconfig.defaults.radio: WiFi / lwIP / httpd / mDNS / Bluetooth (NimBLE) / coexistence
+# Owned by the connectivity engineer (components/net, components/ble). Included by the top
+# CMakeLists via SDKCONFIG_DEFAULTS after sdkconfig.defaults.
+#
+# Principle: radios are OFF unless the user turns them on ("Studio Mode"). Nothing here
+# allocates anything at boot: the WiFi driver, netifs, httpd, DNS, mDNS, the NimBLE host and
+# the BT controller are created on enable and destroyed on disable.
+# Flash writes stall both CPUs (PLAN.md "Storage policy"), so no radio stack may write NVS
+# on its own: WiFi config storage, PHY calibration storage and NimBLE bond storage are off.
+# =====================================================================================
+
+# ---------------- PHY / WiFi driver ----------------
+# Do not store PHY calibration data in NVS (no surprise flash writes on radio enable).
+# Every enable does a full calibration instead (~100 ms extra, once per enable).
+CONFIG_ESP_PHY_CALIBRATION_AND_DATA_STORAGE=n
+# WiFi driver must not persist its config to NVS (we also pass nvs_enable=0 at init and
+# use WIFI_STORAGE_RAM). STA credentials are stored by us through storage_kv_set (soft-muted).
+CONFIG_ESP_WIFI_NVS_ENABLED=n
+# Keep WiFi code in flash: IRAM is reserved for the DSP chain (PLAN.md 6). Costs some
+# throughput, which a control UI and OTA do not need.
+CONFIG_ESP_WIFI_IRAM_OPT=n
+CONFIG_ESP_WIFI_EXTRA_IRAM_OPT=n
+CONFIG_ESP_WIFI_RX_IRAM_OPT=n
+CONFIG_ESP_WIFI_SLP_IRAM_OPT=n
+# Moderate buffers. With SPIRAM_TRY_ALLOCATE_WIFI_LWIP the static RX buffers and lwIP pbufs
+# come from PSRAM first; the remaining internal cost is the driver's DMA descriptors/state.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=8
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_AMPDU_TX_ENABLED=y
+CONFIG_ESP_WIFI_TX_BA_WIN=6
+CONFIG_ESP_WIFI_AMPDU_RX_ENABLED=y
+CONFIG_ESP_WIFI_RX_BA_WIN=6
+CONFIG_ESP_WIFI_MGMT_SBUF_NUM=16
+# WiFi driver task on core 0 (core 1 belongs to audio).
+CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_0=y
+# SoftAP is needed for the setup portal.
+CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y
+# Not needed: enterprise, WPS registrar, NAN, FTM, DPP. Saves flash.
+CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT=n
+CONFIG_ESP_WIFI_FTM_ENABLE=n
+CONFIG_ESP_WIFI_NAN_ENABLE=n
+CONFIG_ESP_WIFI_DPP_SUPPORT=n
+
+# Allocate WiFi/lwIP memory in PSRAM first (needs SPIRAM_USE_MALLOC or SPIRAM_USE_CAPS_ALLOC,
+# set in sdkconfig.defaults by the firmware engineer).
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
+# ---------------- lwIP ----------------
+# tcpip thread on core 0. NOTE: esp_netif_init() cannot be undone (IDF limitation), so after the
+# first WiFi enable the lwIP tcpip task (stack ~3 KB) stays alive. Everything else is freed.
+CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
+CONFIG_LWIP_TCPIP_TASK_STACK_SIZE=3072
+# httpd (7 client sockets + 3 internal) + DNS (1) + spare.
+CONFIG_LWIP_MAX_SOCKETS=12
+# Keep lwIP in flash (IRAM for DSP).
+CONFIG_LWIP_IRAM_OPTIMIZATION=n
+CONFIG_LWIP_EXTRA_IRAM_OPTIMIZATION=n
+# SoftAP setup portal: a few phones at most.
+CONFIG_LWIP_DHCPS_MAX_STATION_NUM=4
+CONFIG_LWIP_IPV6=y
+
+# ---------------- HTTP server ----------------
+# WebSocket push (meters, parameter changes).
+CONFIG_HTTPD_WS_SUPPORT=y
+# Mobile browsers send long headers (cookies on captive probes, user agents).
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+CONFIG_HTTPD_MAX_URI_LEN=512
+# Do not block the caller of httpd_queue_work() (our WS push task) if the queue is full.
+CONFIG_HTTPD_QUEUE_WORK_BLOCKING=n
+
+# ---------------- mDNS (espressif/mdns managed component) ----------------
+CONFIG_MDNS_MAX_SERVICES=2
+CONFIG_MDNS_TASK_AFFINITY_CPU0=y
+CONFIG_MDNS_TASK_STACK_SIZE=3072
+# mDNS records/packets in PSRAM (task stack stays internal).
+CONFIG_MDNS_MEMORY_ALLOC_SPIRAM=y
+# mDNS on the STA and AP netifs only (no ethernet).
+CONFIG_MDNS_PREDEF_NETIF_STA=y
+CONFIG_MDNS_PREDEF_NETIF_AP=y
+CONFIG_MDNS_PREDEF_NETIF_ETH=n
+
+# ---------------- Bluetooth: BLE only, NimBLE peripheral ----------------
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_CONTROLLER_ENABLED=y
+# Peripheral + broadcaster only (BLE-MIDI device). No central/observer code.
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
+CONFIG_BT_NIMBLE_GATT_CLIENT=n
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_NIMBLE_MAX_BONDS=1
+CONFIG_BT_NIMBLE_MAX_CCCDS=4
+# No NVS persistence of bonds/CCCDs (flash writes stall the audio). Pairing still works per
+# connection ("just works", bonding disabled in code).
+CONFIG_BT_NIMBLE_NVS_PERSIST=n
+# NimBLE host allocations (mbuf pools, GATT tables) from PSRAM.
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
+# Host task on core 0.
+CONFIG_BT_NIMBLE_PINNED_TO_CORE_0=y
+CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=4096
+# BLE-MIDI packets are small; 128 leaves room to batch ~30 CC messages per notification.
+CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=128
+CONFIG_BT_NIMBLE_SVC_GAP_DEVICE_NAME="TWOFOLD MIDI"
+CONFIG_BT_NIMBLE_LOG_LEVEL_WARNING=y
+CONFIG_BT_NIMBLE_DEBUG=n
+# Legacy advertising only.
+CONFIG_BT_NIMBLE_50_FEATURE_SUPPORT=n
+CONFIG_BT_NIMBLE_BLUFI_ENABLE=n
+# Controller: core 0, 0 dBm default TX power (ble_midi.c also sets it explicitly).
+CONFIG_BT_CTRL_PINNED_TO_CORE_0=y
+CONFIG_BT_CTRL_DFT_TX_POWER_LEVEL_N0=y
+CONFIG_BT_CTRL_BLE_MAX_ACT=3
+# Controller code in flash instead of IRAM: saves >20 KB IRAM for the DSP. During a flash erase
+# the link layer misses a few connection events (supervision timeout is 4 s, so links survive).
+CONFIG_BT_CTRL_RUN_IN_FLASH_ONLY=y
+
+# ---------------- WiFi + BLE coexistence ----------------
+# Both radios may be on at the same time (web editor + BLE-MIDI): software coexistence.
+CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y

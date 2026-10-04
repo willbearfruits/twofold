@@ -1,0 +1,6 @@
+# Place the whole dsp component (code -> IRAM, constant tables -> DRAM) in internal RAM so the audio path
+# never waits on a flash-cache miss (core 0 evicting cache lines with WiFi/UI code cannot stall core 1's DSP).
+[mapping:dsp]
+archive: libdsp.a
+entries:
+    * (noflash)

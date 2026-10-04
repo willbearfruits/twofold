@@ -1,0 +1,67 @@
+# TWOFOLD firmware: base configuration (ESP32-S3FH4R2 on a Waveshare ESP32-S3-Zero).
+# Radio options (WiFi/NimBLE/httpd) live in sdkconfig.defaults.radio, owned by the net/ble engineers;
+# it is applied after this file, so it wins on any overlap.
+# Every non-default option is documented. See PLAN.md sections 3, 4, 6, 9 and the storage policy (13).
+
+# ---------------- Target / CPU ----------------
+CONFIG_IDF_TARGET="esp32s3"
+# 240 MHz: the DSP budget in PLAN.md 7 assumes 5000 cycles per stereo frame.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# ---------------- Flash (4 MB, QIO @ 80 MHz) ----------------
+# The FH4R2 flash is QIO capable; QIO 80 MHz halves cache-miss refill time vs. DIO 40 MHz.
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+# Custom table: nvs 24K, otadata, phy_init, 2 x 1984K OTA slots (see partitions.csv).
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_OFFSET=0x8000
+
+# ---------------- PSRAM (2 MB quad @ 80 MHz) ----------------
+# Delay lines and the reverb pre-delay live in PSRAM (PLAN.md 6).
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_QUAD=y
+CONFIG_SPIRAM_SPEED_80M=y
+# PSRAM is part of the malloc pool (heap_caps_malloc(MALLOC_CAP_SPIRAM) and large malloc()s).
+CONFIG_SPIRAM_USE_MALLOC=y
+# WiFi/LWIP buffers go to PSRAM where possible, so enabling WiFi does not eat the internal RAM the DSP needs.
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
+# ---------------- Caches ----------------
+# 64-byte D-cache lines: fewer, larger PSRAM refills for the sequential delay-line streams (PLAN.md 6 assumes 64 B).
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
+
+# ---------------- FreeRTOS / tasks ----------------
+# 1 ms tick: input polling (1 ms), ctrl task (2 ms) and UI pacing (16.7 ms) need ms resolution.
+CONFIG_FREERTOS_HZ=1000
+# app_main runs the whole init sequence (NVS, storage, DSP alloc); needs more than the 3.5 KB default.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
+# Main task, esp_timer task + ISR, WiFi and LWIP on core 0: core 1 is reserved for the audio task (PLAN.md 3).
+CONFIG_ESP_MAIN_TASK_AFFINITY_CPU0=y
+CONFIG_ESP_TIMER_TASK_AFFINITY_CPU0=y
+CONFIG_ESP_TIMER_ISR_AFFINITY_CPU0=y
+CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_0=y
+CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
+
+# ---------------- Compiler ----------------
+# -O2: the audio path is cycle-budgeted. (Size is not the constraint with 1984 KB OTA slots.)
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# ---------------- Console ----------------
+# Logs on UART0 (GPIO43/44). The native USB PHY belongs to TinyUSB (UAC2 + MIDI), so the
+# USB-Serial-JTAG must not be used as primary or secondary console, and its driver is disabled.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+CONFIG_USJ_ENABLE_USB_SERIAL_JTAG=n
+
+# ---------------- Audio ----------------
+# I2S DMA ISR runs from IRAM while the flash cache is disabled; with TX auto_clear the DAC then gets
+# zeros instead of a repeated buffer during flash writes (PLAN.md 13, storage policy).
+CONFIG_I2S_ISR_IRAM_SAFE=y
+
+# ---------------- PHY / flash writes ----------------
+# Do not store RF calibration in NVS: no hidden flash writes when WiFi/BLE are enabled (storage policy).
+CONFIG_ESP_PHY_CALIBRATION_AND_DATA_STORAGE=n
+# CONFIG_SPI_FLASH_AUTO_SUSPEND stays at its default (off): it only helps on flash chips that support
+# suspend/resume, which the S3-Zero's flash is not guaranteed to do (PLAN.md 13, assumption 8).

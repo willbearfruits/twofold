@@ -1,0 +1,6 @@
+# The audio task (core 1) and the USB ISR exchange audio through TinyUSB's tu_fifo. Keep the FIFO code in
+# IRAM so neither side takes flash-cache misses on the audio path.
+[mapping:twofold_tusb_fifo]
+archive: libespressif__tinyusb.a
+entries:
+    tusb_fifo (noflash)

@@ -1,0 +1,5 @@
+## TWOFOLD net component: managed dependencies.
+dependencies:
+  idf: ">=5.5"
+  # mDNS responder ("twofold.local"). Started with WiFi, mdns_free()d when WiFi turns off.
+  espressif/mdns: "^1.8.0"
