@@ -6,7 +6,7 @@ idf_component_register(
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "."
     REQUIRES ui                     # net.h uses wifi_state_t / sys_status_t from ui_sys.h
-    PRIV_REQUIRES esp_wifi esp_netif esp_event esp_http_server esp_timer esp_app_format app_update
+    PRIV_REQUIRES bootdiag esp_wifi esp_netif esp_event esp_http_server esp_timer esp_app_format app_update
                   esp_partition lwip json params dsp storage)
 
 # The web app is a single hand-written file (web/index.html). It is gzipped at build time

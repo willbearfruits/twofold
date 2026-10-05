@@ -36,6 +36,7 @@ typedef struct {
     bool     ota_in_progress;
     uint8_t  ota_pct;
     const char *fw_version;
+    const char *boot_note;       /* e.g. "BROWNOUT: WIFI START" after an abnormal reset, else NULL */
 } sys_status_t;
 
 typedef struct {

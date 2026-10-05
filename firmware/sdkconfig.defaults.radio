@@ -121,3 +121,8 @@ CONFIG_BT_CTRL_RUN_IN_FLASH_ONLY=y
 # ---------------- WiFi + BLE coexistence ----------------
 # Both radios may be on at the same time (web editor + BLE-MIDI): software coexistence.
 CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
+
+# Cap the PHY's maximum TX power from the very first transmission (calibration at esp_wifi_start runs before the
+# runtime esp_wifi_set_max_tx_power()). 11 dBm keeps the TX current spike within what small 3V3 regulators on
+# ESP32-S3 SuperMini-class boards can deliver (avoids brownout resets when WiFi starts).
+CONFIG_ESP_PHY_MAX_WIFI_TX_POWER=11

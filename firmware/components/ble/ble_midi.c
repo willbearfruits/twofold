@@ -16,6 +16,7 @@
  * ble_midi_poll()/ble_midi_send_cc(). A mutex serialises enable/disable against them; the poll
  * path only ever *tries* it, so the ctrl task never waits for a (slow) enable/disable.
  */
+#include "bootdiag.h"
 #include <math.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -331,10 +332,14 @@ esp_err_t ble_midi_enable(bool on)
     xSemaphoreTake(s_lock, portMAX_DELAY);
     esp_err_t e = ESP_OK;
     if (on && !s_on) {
+        bootdiag_crumb("BLE START");
         e = start();
+        bootdiag_crumb(e == ESP_OK ? "BLE ON" : NULL);
         if (e != ESP_OK) s_state = BLE_ERROR;
     } else if (!on && s_on) {
+        bootdiag_crumb("BLE STOP");
         stop();
+        bootdiag_crumb(NULL);
     } else if (!on) {
         s_state = BLE_OFF;
     }

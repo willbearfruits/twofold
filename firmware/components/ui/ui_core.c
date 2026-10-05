@@ -93,6 +93,13 @@ void ui_pop(void)
 
 void ui_go_home(void)
 {
+    static bool s_noted;
+    if (!s_noted) {               /* first arrival on HOME after boot: report an abnormal last reset */
+        s_noted = true;
+        sys_status_t st;
+        sys_get_status(&st);
+        if (st.boot_note) ui_toast(st.boot_note);
+    }
     scr_id_t from = ui_current();
     s_stack[0] = SCR_HOME;
     s_sp = 1;

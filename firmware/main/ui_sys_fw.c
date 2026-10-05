@@ -2,6 +2,7 @@
  * ui_sys_fw.c: firmware implementation of ui_sys.h. All functions run in the UI task (core 0) and return
  * quickly: anything slow (radios, flash writes, reboot) is posted to the sys task (ctrl.c).
  */
+#include "bootdiag.h"
 #include <string.h>
 #include "ui_sys.h"
 #include "twofold.h"
@@ -38,6 +39,7 @@ void sys_get_status(sys_status_t *s)
     for (int i = 0; i < 8; i++) storage_preset_name(i, s->preset_names[i]);
     s->storage_pending = storage_pending();
     s->fw_version = esp_app_get_description()->version;
+    s->boot_note = bootdiag_note();
 }
 
 void sys_get_diag(sys_diag_t *d)

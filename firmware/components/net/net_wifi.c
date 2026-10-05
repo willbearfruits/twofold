@@ -28,6 +28,7 @@
 #include "mdns.h"
 #include "storage.h"
 #include "net_priv.h"
+#include "bootdiag.h"
 
 static const char *TAG = "net";
 
@@ -190,7 +191,9 @@ static esp_err_t set_mode(wifi_mode_t m)
 static esp_err_t ensure_started(void)
 {
     if (s_started) { apply_radio_settings(); return ESP_OK; }
+    bootdiag_crumb("WIFI START");
     esp_err_t e = esp_wifi_start();
+    bootdiag_crumb("WIFI ON");
     if (e != ESP_OK) return e;
     s_started = true;
     apply_radio_settings();
@@ -218,6 +221,7 @@ static esp_err_t bring_up(void)
     s_heap_ext0 = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
     set_state(WIFI_STARTING);
 
+    bootdiag_crumb("WIFI INIT");
     esp_err_t e = esp_netif_init();                 /* idempotent; lwIP tcpip task persists */
     if (e != ESP_OK) goto fail;
     e = esp_event_loop_create_default();
@@ -239,8 +243,11 @@ static esp_err_t bring_up(void)
     esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID, on_event, NULL, &s_h_ip);
     esp_wifi_set_country_code("01", true);           /* world-safe, follow the AP's 802.11d info */
 
+    bootdiag_crumb("WIFI MDNS");
     mdns_start();
+    bootdiag_crumb("WIFI HTTP");
     if (net_http_start() == ESP_OK) s_http_on = true;
+    bootdiag_crumb("WIFI ON");
     return ESP_OK;
 fail:
     ESP_LOGE(TAG, "bring-up failed: %s", esp_err_to_name(e));
@@ -252,6 +259,7 @@ fail:
 
 static void teardown(void)
 {
+    bootdiag_crumb("WIFI STOP");
     if (s_http_on) {
         vTaskDelay(pdMS_TO_TICKS(250));   /* let a just-sent HTTP response (e.g. "Studio Mode") leave */
         net_http_stop();                  /* also stops the WS push task; waits for handlers */
@@ -287,6 +295,7 @@ static void teardown(void)
     s_mode = WIFI_MODE_NULL;
     s_rssi = 0;
     set_state(WIFI_OFF);
+    bootdiag_crumb(NULL);
 
     if (s_heap_int0) {
         size_t i1 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
@@ -640,7 +649,7 @@ static esp_err_t post(uint8_t type, int32_t arg)
         ret = ESP_ERR_NO_MEM;
     } else if (!s_task) {
         /* internal-RAM stack: this task writes flash (credentials) via storage */
-        if (xTaskCreatePinnedToCore(mgr_task, "net_mgr", 4096, NULL, 4, &s_task, 0) != pdPASS) {
+        if (xTaskCreatePinnedToCore(mgr_task, "net_mgr", 8192, NULL, 4, &s_task, 0) != pdPASS) {
             s_task = NULL;
             xQueueReset(s_q);
             ret = ESP_ERR_NO_MEM;

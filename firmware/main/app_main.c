@@ -17,6 +17,7 @@
  * 12. radios             OFF unless P_NET_BOOT == RESTORE (then P_NET_WIFI / P_NET_BLE are restored)
  */
 #include "twofold.h"
+#include "bootdiag.h"
 #include "params.h"
 #include "storage.h"
 #include "audio.h"
@@ -33,6 +34,7 @@ static const char *TAG = "twofold";
 
 void app_main(void)
 {
+    bootdiag_init();             /* reset reason + last breadcrumb, shown as a toast after boot */
     audio_early_init();
     params_init();
     CHECK(storage_init());
