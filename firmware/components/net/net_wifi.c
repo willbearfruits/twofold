@@ -221,6 +221,14 @@ static esp_err_t bring_up(void)
     s_heap_ext0 = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
     set_state(WIFI_STARTING);
 
+    /* The WiFi blob does not survive allocation failures gracefully (it crashed in ieee80211_hostap_attach):
+     * refuse to start rather than crash when internal RAM is short. */
+    if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < NET_MIN_INTERNAL_HEAP) {
+        ESP_LOGE(TAG, "not enough internal RAM for WiFi: %u B free", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+        set_state(WIFI_ERROR);
+        set_err("Not enough memory");
+        return ESP_ERR_NO_MEM;
+    }
     bootdiag_crumb("WIFI INIT");
     esp_err_t e = esp_netif_init();                 /* idempotent; lwIP tcpip task persists */
     if (e != ESP_OK) goto fail;

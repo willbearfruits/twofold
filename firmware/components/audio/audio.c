@@ -118,7 +118,7 @@ void audio_early_init(void)
 /* Internal RAM kept free after DSP allocation for task stacks, drivers and the opt-in radios
  * (WiFi ~45 KB + BLE ~35 KB internal with buffers in PSRAM). Below that, DSP buffers spill to PSRAM;
  * the reverb asks for its lines shortest-first, so only its long sequential delay lines ever spill. */
-#define DSP_INTERNAL_RESERVE (96 * 1024)
+#define DSP_INTERNAL_RESERVE (140 * 1024)   /* measured need: WiFi start crashed in the blob at ~96 KB */
 static size_t s_fast_spilled;
 
 static void *alloc_fast(size_t bytes)

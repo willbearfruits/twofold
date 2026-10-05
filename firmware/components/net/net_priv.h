@@ -26,6 +26,7 @@
  * Plenty for a desk/studio room, ~9 dB below the S3's default 20 dBm: less supply ripple next to
  * the analog stages and less 2.4 GHz noise. */
 #define NET_WIFI_TX_POWER_QDBM 44
+#define NET_MIN_INTERNAL_HEAP  (56 * 1024)   /* refuse WiFi below this (driver + lwIP + httpd + DNS + mDNS) */
 
 /* STA connect attempts before falling back to the AP setup portal. */
 #define NET_STA_RETRIES_FIRST  5    /* never connected since enable (bad password, wrong SSID...) */
