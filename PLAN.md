@@ -135,6 +135,8 @@ mode-specific to calibrate. The OUT FIFO targets half-full (4 ms). Feedback is c
 
 ## 5. Pin map (single source: `firmware/components/board/include/board_config.h`)
 
+> Superseded at bring-up: the board is now the ESP32-S3 SuperMini with the kit wiring (see §14 and docs/wiring.md). The original S3-Zero table follows.
+
 Waveshare ESP32-S3-Zero (ESP32-S3FH4R2) exposes GPIO1–18, 21 (onboard WS2812), 38–45, 43/44 (UART0), 19/20 (USB).
 GPIO33–37 are not broken out. Avoided: strapping pins 0/3/45/46, USB 19/20, UART0 43/44 (kept for logs),
 JTAG 39–42 (kept free).
@@ -320,5 +322,9 @@ therefore enforced by *when* we write:
 * (integration) The enclosure generator pipeline was replaced by one hand-written, self-contained parametric
   `enclosure/twofold.scad` (the sourced module dimensions were kept) plus `enclosure/check.sh` (OpenSCAD intersection
   checks graded by volume). Front height 26 mm (was 24) so the M3 insert bosses are long enough at the front.
+* (bring-up) **Target board changed to the ESP32-S3 SuperMini with the kit / gesture-recorder wiring**: I2S 7/8/9/10,
+  I2C 12/13, encoder 4/5/6, MAX98357A enable 11, RGB LED 48, MCLK (PCM1808 only) on spare GPIO21; PCM5102A XSMT
+  bridged high (output enable = amp SD only). The kit input is an INMP441 mic (mono, left slot); a PCM1808 still
+  drops in on GPIO10 + MCLK 21. §5 below is the original S3-Zero plan; `board_config.h` / docs/wiring.md are current.
 * (initial) The S3 I2C controller has no DMA. The display uses the IDF interrupt-driven asynchronous I2C master
   on core 0 with a dirty-band flush. This meets "never block audio" (different core, no shared locks) without DMA.

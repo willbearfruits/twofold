@@ -44,6 +44,12 @@ the boss/plate joins). PrusaSlicer, Cura and Bambu Studio repair this automatica
 | 1 | EC11 encoder with push switch, **15 mm** D-shaft, M7 nut + washer |
 ESP32-S3-Zero and GY-PCM5102 have no mounting holes. They snap into printed cradles (front snap lip / side lips).
 
+## Board variant
+The model was drawn for the Waveshare ESP32-S3-Zero (18 × 23.5 mm). The ESP32-S3 SuperMini used at bring-up is
+about 18 × 22.5 mm, also with USB-C on a short edge and the antenna at the far end. Set `s3_pcb`, `s3_usb_overhang`
+and `s3_top_h` from your board (and the RGB LED/buttons height), then run `check.sh`. The cradle and the USB-C
+opening follow the variables.
+
 ## Measurement checklist (calipers, before printing)
 | measure | variable(s) | why |
 |---|---|---|

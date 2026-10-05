@@ -75,6 +75,7 @@ MODE_DIR = {
     "BOARD_PIN_I2S_DOUT": ("out", "out"),
     "BOARD_PIN_I2S_DIN": ("in", "in"),
     "BOARD_PIN_DAC_XSMT": ("out", "out"),
+    "BOARD_PIN_AMP_SD": ("out", "out"),
 }
 DEFAULT_DIR = {
     "BOARD_PIN_I2C_SDA": "io (open drain)", "BOARD_PIN_I2C_SCL": "out (open drain)",
@@ -88,7 +89,7 @@ def _cell(s: str) -> str:
 
 
 def gpio_table(pins: list[Pin]) -> list[str]:
-    L = ["| S3-Zero GPIO | signal | connects to (module pin) | dir, internal clock | dir, ext. oscillator | notes |",
+    L = ["| GPIO | signal | connects to (module pin) | dir, internal clock | dir, ext. oscillator | notes |",
          "|---|---|---|---|---|---|"]
     for p in sorted(pins, key=lambda q: q.gpio):
         d_int, d_ext = MODE_DIR.get(p.macro, (DEFAULT_DIR.get(p.macro, "-"),) * 2)
@@ -105,13 +106,13 @@ def module_view(pins: list[Pin]) -> list[str]:
     for p in pins:
         for m in p.modules:
             if m.lower().startswith("onboard"):
-                continue  # on the S3-Zero PCB itself, nothing to wire
+                continue  # on the board itself, nothing to wire
             parts = m.split(None, 1)
             mod, pin = (parts[0], parts[1]) if len(parts) == 2 else (m, "")
             by_mod.setdefault(mod, []).append((pin, p))
     L: list[str] = []
     for mod in sorted(by_mod):
-        L += [f"**{mod}**", "", "| module pin | S3-Zero | signal |", "|---|---|---|"]
+        L += [f"**{mod}**", "", "| module pin | GPIO | signal |", "|---|---|---|"]
         for pin, p in sorted(by_mod[mod], key=lambda t: t[0]):
             L.append(f"| {pin or '-'} | GPIO{p.gpio} | {p.signal} |")
         L.append("")
@@ -121,11 +122,11 @@ def module_view(pins: list[Pin]) -> list[str]:
 POWER = """\
 | from | to | notes |
 |---|---|---|
-| S3-Zero **5V** (USB VBUS) | PCM1808 module **+5V** (VCC) | analog supply; the module's LDO makes its 3.3 V. If your module has *no* LDO, feed its 3.3V pin from S3-Zero 3V3 instead |
-| S3-Zero **5V** (USB VBUS) | PCM5102A module **VIN** | GY-PCM5102 has its own LDOs (3.3–5 V input); 5 V gives the cleanest AVDD |
-| S3-Zero **3V3** | OLED **VCC** | |
-| S3-Zero **3V3** | 12.288 MHz oscillator **VDD** and **OE/ST** *(low-jitter mode only)* | 100 nF + 1 µF ceramic right at the oscillator VDD pin |
-| S3-Zero **GND** | PCM1808 GND, PCM5102A GND, OLED GND, EC11 C (common) and switch leg, oscillator GND | star ground at the S3-Zero GND pin; keep the audio modules' grounds short and together, run the USB/digital return away from the analog jacks |
+| board **5V** (USB VBUS) | PCM1808 module **+5V** (VCC) | analog supply; the module's LDO makes its 3.3 V. If your module has *no* LDO, feed its 3.3V pin from board 3V3 instead |
+| board **5V** (USB VBUS) | PCM5102A module **VIN** | GY-PCM5102 has its own LDOs (3.3–5 V input); 5 V gives the cleanest AVDD |
+| board **3V3** | OLED **VCC** | |
+| board **3V3** | 12.288 MHz oscillator **VDD** and **OE/ST** *(low-jitter mode only)* | 100 nF + 1 µF ceramic right at the oscillator VDD pin |
+| board **GND** | PCM1808 GND, PCM5102A GND, OLED GND, EC11 C (common) and switch leg, oscillator GND | star ground at the board GND pin; keep the audio modules' grounds short and together, run the USB/digital return away from the analog jacks |
 | — | PCM1808 module 3.3V pin | leave open when the module regulates its own 3.3 V (do not back-feed the module LDO) |
 
 Logic levels: all I2S/control signals are 3.3 V (ESP32-S3 IO, PCM1808 DVDD = 3.3 V, PCM5102A DVDD = 3.3 V).
@@ -139,38 +140,42 @@ STRAPS = """\
 | PCM1808 **FMT** | GND (0) | GND (0) | I2S data format |
 | PCM1808 **MD0** | GND (0) | 3V3 (1) | MD1:MD0 = 00: slave; 11: master, SCKI = 256·fs |
 | PCM1808 **MD1** | GND (0) | 3V3 (1) | (see MD0) |
-| PCM1808 **SCKI** | ← S3 GPIO4 (MCLK 12.288 MHz) | ← oscillator via **33 Ω** | system clock |
-| PCM1808 **BCK / LRC** | inputs ← S3 GPIO5 / GPIO6 | **outputs** → S3 GPIO5 / GPIO6 and PCM5102A BCK / LCK | bit / frame clock |
+| PCM1808 **SCKI** | ← S3 GPIO21 (MCLK 12.288 MHz) | ← oscillator via **33 Ω** | system clock |
+| PCM1808 **BCK / LRC** | inputs ← S3 GPIO7 / GPIO8 | **outputs** → S3 GPIO7 / GPIO8 and PCM5102A BCK / LCK | bit / frame clock |
 | PCM5102A **FMT** | GND (L) | GND (L) | I2S data format |
 | PCM5102A **FLT** | GND (L) | GND (L) | normal-latency FIR filter |
 | PCM5102A **DEMP** | GND (L) | GND (L) | de-emphasis off |
-| PCM5102A **XSMT** | ← S3 GPIO9 (module XSMT jumper **open**) | ← S3 GPIO9 | soft mute, high = play; firmware holds it low during boot / clock changes |
+| PCM5102A **XSMT** | 3V3 (H) — bridged on the kit board | 3V3 (H) | high = play. Optional: wire it to a free GPIO and set BOARD_PIN_DAC_XSMT for a hardware soft-mute at boot |
 | PCM5102A **SCK** | **GND** (internal PLL locks to BCK) | ← oscillator via **33 Ω** (PLL bypassed) | system clock |
 
 GY-PCM5102 boards set FLT/DEMP/XSMT/FMT with solder jumpers H1L–H4L on the back: bridge FLT, DEMP and FMT to L,
-leave XSMT (H3) **open** and wire the XSMT header pin to GPIO9. Its SCK pad is often bridged to GND on the
+and bridge XSMT (H3) to H (as on the kit board). Its SCK pad is often bridged to GND on the
 front: keep that bridge for the internal mode, remove it for the low-jitter mode.
 """
 
 DIAG_INT = """\
-INTERNAL CLOCK MODE (default): ESP32-S3 is I2S master, PLL_F160M / (13 + 1/48) -> MCLK
+INTERNAL CLOCK MODE (default): ESP32-S3 is I2S master, PLL_F160M / (13 + 1/48) -> MCLK. Kit board wiring.
 
                        +--------------------------------+
-   USB-C ==============| Waveshare ESP32-S3-Zero        |
-                       |                                |         +-------------------+
-                       |  GPIO4  MCLK  12.288 MHz  ---->|-------->| SCKI              |
-                       |  GPIO5  BCK    3.072 MHz  ---->|---+---->| BCK    PCM1808    |<== line in L/R
-                       |  GPIO6  LRCK      48 kHz  ---->|---|-+-->| LRC    (slave,    |
-                       |  GPIO8  DIN               <----|---|-|---| DOUT   MD1:0=00)  |
+   USB-C ==============| ESP32-S3 SuperMini             |         +-------------------+
+                       |  GPIO7  BCK    3.072 MHz  ---->|---+---->| SCK    INMP441    |<== mic (L slot)
+                       |  GPIO8  LRCK      48 kHz  ---->|---|-+-->| WS     (L/R = GND)|
+                       |  GPIO10 DIN               <----|---|-|---| SD                |
                        |                                |   | |   +-------------------+
                        |                                |   | |   +-------------------+
                        |                                |   +-|-->| BCK               |
-                       |                                |     +-->| LCK   PCM5102A    |==> line out L/R
-                       |  GPIO7  DOUT              ---->|-------->| DIN   (SCK = GND, |
-                       |  GPIO9  XSMT              ---->|-------->| XSMT   PLL on BCK)|
+                       |                                |   | +-->| LCK   PCM5102A    |==> line out L/R
+                       |  GPIO9  DOUT              ---->|---|-|-->| DIN   (SCK = GND, |
+                       |                                |   | |   |  XSMT = H)        |
+                       |                                |   | |   +-------------------+
+                       |                                |   +-|-->| BCLK  MAX98357A   |==> speaker
+                       |                                |     +-->| LRC               |
+                       |  GPIO9  DOUT (same line)  ---->|-------->| DIN               |
+                       |  GPIO11 AMP SD            ---->|-------->| SD (high = on)    |
                        |                                |         +-------------------+
-                       |  GPIO1/2  I2C  ---> OLED       |
-                       |  GPIO10/11/12  <--- EC11 A/B/SW|
+                       |  GPIO21 MCLK -> PCM1808 SCKI (only if a PCM1808 replaces the mic on GPIO10)
+                       |  GPIO12/13  I2C  ---> OLED     |
+                       |  GPIO4/5/6  <--- EC11 A/B/SW   |
                        +--------------------------------+
 """
 
@@ -186,12 +191,12 @@ LOW-JITTER MODE (CONFIG_TWOFOLD_CLOCK_EXT_OSC): 12.288 MHz XO, PCM1808 is master
                             | +---+----+-----+----+
                             |     |    |     |
    +------------------------|-----|----|-----|-----+
-   | ESP32-S3-Zero          |     |    |     |     |
-   |  GPIO5 BCK  (in)  <----|-----+    |     |     |     GPIO4 (MCLK): not connected
-   |  GPIO6 LRCK (in)  <----|-----|----+     |     |
-   |  GPIO8 DIN        <----|-----|----|-----+     |
-   |  GPIO7 DOUT  ----+     |     |    |           |
-   |  GPIO9 XSMT -+   |     |     |    |           |
+   | ESP32-S3 SuperMini     |     |    |     |     |
+   |  GPIO7 BCK  (in)  <----|-----+    |     |     |     GPIO21 (MCLK): not connected
+   |  GPIO8 LRCK (in)  <----|-----|----+     |     |
+   |  GPIO10 DIN       <----|-----|----|-----+     |
+   |  GPIO9 DOUT  ----+     |     |    |           |
+   |  XSMT = H ---+   |     |     |    |           |
    +--------------|---|-----|-----|----|-----------+
                   |   |     |     |    |
               +---v---v-----v-----v----v----+
@@ -206,16 +211,16 @@ def render(pins: list[Pin], defines: dict[str, str], header_rel: str) -> str:
     fs = defines.get("BOARD_SAMPLE_RATE", "48000")
     k = defines.get("BOARD_MCLK_MULTIPLE", "256")
     xo = defines.get("BOARD_EXT_OSC_HZ", "12288000")
-    unused = sorted((set(range(1, 19)) | {38}) - {p.gpio for p in pins})
+    unused = sorted(set(range(1, 14)) - {p.gpio for p in pins} - {1, 2, 3})   # 1/2/3: the kit's joystick
     L = ["# TWOFOLD wiring", "",
          f"<!-- GENERATED by tools/gen_wiring.py from {header_rel}. Do not edit by hand: change the header's",
          "     `/* PIN: signal | module pin | notes */` comments and re-run the script. -->", "",
-         f"Board: Waveshare ESP32-S3-Zero. Audio: {int(fs) // 1000} kHz, MCLK = {k}·fs "
+         f"Board: ESP32-S3 SuperMini (kit wiring, same as gesture-recorder). Audio: {int(fs) // 1000} kHz, MCLK = {k}·fs "
          f"({int(fs) * int(k) / 1e6:.3f} MHz) in internal mode, external oscillator {int(xo) / 1e6:.3f} MHz "
          "in low-jitter mode (PLAN.md §4).", "",
-         "## 1. S3-Zero GPIO → modules", "", *gpio_table(pins), "",
-         "Unused broken-out GPIOs (spare): " + ", ".join(f"GPIO{g}" for g in unused if g not in (0, 3)) + ". "
-         "Avoid strapping pins 0/3/45/46, USB 19/20, UART0 43/44, JTAG 39–42.", "",
+         "## 1. SuperMini GPIO → modules", "", *gpio_table(pins), "",
+         "GPIO1/2/3 stay with the kit's joystick (unused by TWOFOLD). Avoid strapping pins 0/3/45/46, USB 19/20, "
+         "UART0 43/44 (console); GPIO48 is the onboard RGB LED.", "",
          "## 2. Per-module view", "", *module_view(pins),
          "Other module pins: PCM1808 FMT/MD0/MD1 and PCM5102A FLT/DEMP/FMT/SCK are strapped (section 4); EC11 C "
          "and the second switch leg go to GND; OLED VCC/GND per section 3.", "",

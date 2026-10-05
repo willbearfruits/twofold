@@ -76,18 +76,43 @@ static StackType_t s_stack[AUDIO_TASK_STACK / sizeof(StackType_t)];
 static StaticTask_t s_tcb;
 
 /* ------------------------------------------------------------------------------------------------ */
+#ifndef BOARD_PIN_AMP_SD
+#define BOARD_PIN_AMP_SD (-1)
+#endif
+
+/* Output enables: the DAC's XSMT soft-mute and/or a speaker amp's shutdown pin, whichever the board has.
+ * Both are held low until the I2S clocks are stable, then raised together with the start-up volume ramp. */
+static void out_enable(int level)
+{
+    (void)level;
+#if BOARD_PIN_DAC_XSMT >= 0
+    gpio_set_level(BOARD_PIN_DAC_XSMT, level);
+#endif
+#if BOARD_PIN_AMP_SD >= 0
+    gpio_set_level(BOARD_PIN_AMP_SD, level);
+#endif
+}
+
 void audio_early_init(void)
 {
+    uint64_t mask = 0;
+#if BOARD_PIN_DAC_XSMT >= 0
+    mask |= 1ULL << BOARD_PIN_DAC_XSMT;
+#endif
+#if BOARD_PIN_AMP_SD >= 0
+    mask |= 1ULL << BOARD_PIN_AMP_SD;
+#endif
+    if (!mask) return;
     const gpio_config_t io = {
-        .pin_bit_mask = 1ULL << BOARD_PIN_DAC_XSMT,
+        .pin_bit_mask = mask,
         .mode = GPIO_MODE_OUTPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_ENABLE,
         .intr_type = GPIO_INTR_DISABLE,
     };
-    gpio_set_level(BOARD_PIN_DAC_XSMT, 0);
+    out_enable(0);
     gpio_config(&io);
-    gpio_set_level(BOARD_PIN_DAC_XSMT, 0);
+    out_enable(0);
 }
 
 /* Internal RAM kept free after DSP allocation for task stacks, drivers and the opt-in radios
@@ -252,7 +277,7 @@ static IRAM_ATTR __attribute__((noinline)) void audio_loop(void)
             good_blocks = 0;
             if (clock_ok) {
                 clock_ok = false;
-                if (unmuted) gpio_set_level(BOARD_PIN_DAC_XSMT, 0);
+                if (unmuted) out_enable(0);
                 unmuted = false;
                 usbdev_set_clock_valid(false);
             }
@@ -363,7 +388,7 @@ static IRAM_ATTR __attribute__((noinline)) void audio_loop(void)
         /* ---- DAC unmute once clocks are stable ---- */
         good_blocks++;
         if (!unmuted && good_blocks >= UNMUTE_BLOCKS) {
-            gpio_set_level(BOARD_PIN_DAC_XSMT, 1);
+            out_enable(1);
             if (s_dsp_ok) dsp_engine_startup_ramp(AUDIO_STARTUP_RAMP_MS);
             unmuted = true;
         }

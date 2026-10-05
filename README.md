@@ -25,9 +25,10 @@ Docs: [PLAN.md](PLAN.md) (architecture, clocking, budgets, every assumption and 
 ### BOM
 | qty | part | notes |
 |---|---|---|
-| 1 | Waveshare ESP32-S3-Zero (ESP32-S3FH4R2, 4 MB flash, 2 MB PSRAM) | native USB-C on GPIO19/20 |
-| 1 | PCM5102A module ("GY-PCM5102", purple) | open its XSMT solder jumper (GPIO9 drives XSMT); FMT=L, FLT=L, DEMP=L |
-| 1 | PCM1808 module | FMT=0 (I2S). MD1=MD0=0 (slave) in internal clock mode; MD1=MD0=1 (master 256fs) in low-jitter mode |
+| 1 | ESP32-S3 SuperMini (ESP32-S3FH4R2, 4 MB flash, 2 MB PSRAM) | native USB-C on GPIO19/20; tested target (flashed, enumerates) |
+| 1 | PCM5102A module ("GY-PCM5102", purple) | XSMT bridged H, FMT=L, FLT=L, DEMP=L, SCK=GND |
+| 1 | INMP441 I2S microphone (kit input) **or** PCM1808 line-in module | PCM1808: FMT=0, MD1=MD0=0 (slave, MCLK from GPIO21) or 1/1 (master, low-jitter mode) |
+| (1) | MAX98357A I2S speaker amp (kit) | enabled via GPIO11 |
 | 1 | 0.96" 128×64 I2C OLED (SSD1306 or SH1106, 4-pin, 0x3C) | controller selectable in Kconfig and at runtime (Settings → OLED) |
 | 1 | EC11 encoder with switch, 15 mm D-shaft | 2 × 10 nF from A/B to GND recommended |
 | 2 (3) | 3.5 mm stereo panel jacks (PJ-392 class, M6 bushing) | inputs (+ output if `output_jack="panel"`) |
@@ -40,22 +41,23 @@ All pins live in one header, [`board_config.h`](firmware/components/board/includ
 (per module, power, strapping, both clock modes, ASCII diagrams) are generated from it into
 [docs/wiring.md](docs/wiring.md) by `tools/gen_wiring.py`.
 
-| S3-Zero | signal | connects to | internal clock mode | low-jitter mode |
-|---|---|---|---|---|
-| GPIO1 | OLED SDA | OLED SDA | | |
-| GPIO2 | OLED SCL | OLED SCL | | |
-| GPIO4 | I2S MCLK | PCM1808 SCKI | out 12.288 MHz | unused (oscillator drives SCKI) |
-| GPIO5 | I2S BCK | PCM1808 BCK, PCM5102A BCK | out 3.072 MHz | in (from PCM1808) |
-| GPIO6 | I2S LRCK | PCM1808 LRC, PCM5102A LCK | out 48 kHz | in (from PCM1808) |
-| GPIO7 | I2S DOUT | PCM5102A DIN | out | out |
-| GPIO8 | I2S DIN | PCM1808 DOUT | in | in |
-| GPIO9 | DAC XSMT | PCM5102A XSMT | out | out |
-| GPIO10 / 11 | ENC A / B | EC11 A / B (C → GND) | in, pull-up | |
-| GPIO12 | ENC SW | EC11 switch (→ GND) | in, pull-up | |
-| GPIO21 | status LED | onboard WS2812 | RMT | |
+| GPIO | signal | connects to | notes |
+|---|---|---|---|
+| 7 | I2S BCK | PCM5102A BCK, INMP441 SCK, MAX98357A BCLK (or PCM1808 BCK) | input in low-jitter mode |
+| 8 | I2S LRCK | PCM5102A LCK, INMP441 WS, MAX98357A LRC (or PCM1808 LRC) | input in low-jitter mode |
+| 9 | I2S DOUT | PCM5102A DIN, MAX98357A DIN | |
+| 10 | I2S DIN | INMP441 SD (or PCM1808 DOUT) | |
+| 11 | AMP SD | MAX98357A SD | high once clocks are stable (pop-free start) |
+| 12 / 13 | I2C SDA / SCL | OLED | shared with the kit's IMU/ToF |
+| 4 / 5 / 6 | ENC A / B / SW | EC11 (C and switch leg → GND) | internal pull-ups |
+| 21 | I2S MCLK | PCM1808 SCKI (only if fitted) | 12.288 MHz, internal clock mode |
+| 48 | status LED | onboard RGB LED | |
 
-Avoided on purpose: strapping pins 0/3/45/46, USB 19/20, UART0 43/44 (console), JTAG 39–42. Spare: 13–18, 38.
-PCM5102A SCK: **GND** in internal mode (its PLL locks to BCK), **oscillator** in low-jitter mode.
+This is the same wiring as the kit / gesture-recorder builds, so an existing kit board runs TWOFOLD unchanged.
+GPIO1/2/3 stay with the kit's joystick. Avoided: strapping 0/3/45/46, USB 19/20, UART0 43/44.
+The kit's input is the INMP441 microphone (mono, left slot): set **Gain → INPUT → LEFT** to hear it in both ears.
+PCM5102A SCK: **GND** in internal mode (its PLL locks to BCK), **oscillator** in low-jitter mode. XSMT is bridged high
+(set `BOARD_PIN_DAC_XSMT` to a free GPIO if you want a hardware soft-mute during boot).
 
 ## Clocking
 
@@ -89,7 +91,7 @@ idf.py build
 ```
 
 Flashing: TinyUSB owns the native USB port at runtime, so enter the ROM bootloader first. Hold **BOOT**, tap
-**RESET**, release BOOT; the board enumerates as a USB-serial/JTAG device. Then:
+**RST**, release BOOT; the board enumerates as a USB-serial/JTAG device (`303a:1001`). Then:
 
 ```sh
 idf.py -p /dev/ttyACM0 flash
@@ -129,14 +131,14 @@ python3 tools/loopback.py --selftest          # measurement-suite self-test (syn
 The radios are the main noise risk in a USB-powered device with converters and an RF SoC on one supply.
 Hence Studio Mode, but the hardware matters too:
 * **Separate analog supply:** feed the PCM1808 and PCM5102A analog rails (AVDD / VCC) from their own low-noise LDO
-  (e.g. TPS7A2033 / LP5907, ≥ 70 dB PSRR at 1 kHz) off USB 5 V, not from the S3-Zero's 3V3 regulator.
+  (e.g. TPS7A2033 / LP5907, ≥ 70 dB PSRR at 1 kHz) off USB 5 V, not from the board's small 3V3 regulator.
   Most modules have an onboard LDO; feed it from a filtered 5 V branch.
 * **Ferrite bead + bulk:** 5 V → ferrite bead (600 Ω @ 100 MHz, e.g. BLM18PG601) → 47–100 µF low-ESR bulk
   at each converter module. Add 10 µF + 100 nF at each module's supply pins, and 100 nF at the oscillator.
 * **Ground:** star the grounds at the USB connector (or one point near the DAC). Run the I2S lines with their
   ground return beside them and keep them short (< 10 cm, ideally twisted with GND). Series 22–33 Ω on BCK/LRCK/MCLK
   at the driver damps ringing. Keep the jack grounds on the analog ground, not the chassis.
-* **Antenna keep-out:** the S3-Zero's ceramic antenna end faces into an empty zone, away from both converter
+* **Antenna keep-out:** the S3 board's antenna end faces into an empty zone, away from both converter
   modules and their analog wiring. The enclosure enforces this with its `antenna-keepout` check. Keep metal and cables
   ≥ 10 mm from the antenna.
 * **Firmware side:** reduced TX power, modem sleep, radios fully off by default, and the BLE/WiFi stacks on core 0.
