@@ -282,6 +282,7 @@ const now = () => performance.now();
 const minus = s => s.replace(/^-/, '−');
 
 async function req(method, path, body) {
+ if (USB.want && !USB.dev) await usbReconnect();   /* the device was replugged: re-open it, no picker needed */
  if (USB.dev) {                       /* serialise: one USB request in flight */
   const run = () => usbRpc(method, path, body);
   const p = USB.chain.then(run, run);
@@ -301,7 +302,7 @@ const get = p => req('GET', p), post = (p, b) => req('POST', p, b || {});
 
 /* ---------- WebUSB transport: the same API over the device's vendor interface (no WiFi; Chrome/Edge).
  * Frames: u32 LE length + "METHOD /path\n" + body  ->  u32 LE length + "STATUS\n" + JSON. One request at a time. */
-const USB = {dev: null, itf: 5, ep: 4, chain: Promise.resolve()};
+const USB = {dev: null, itf: 5, ep: 4, chain: Promise.resolve(), want: false, lastTry: 0};
 const USB_IDS = [{vendorId: 0x303a, productId: 0x4a57}];
 async function usbConnect(dev) {
  if (!navigator.usb) throw new Error('WebUSB needs Chrome or Edge');
@@ -309,10 +310,20 @@ async function usbConnect(dev) {
  await dev.open();
  if (dev.configuration === null) await dev.selectConfiguration(1);
  await dev.claimInterface(USB.itf);
- USB.dev = dev;
+ USB.dev = dev; USB.want = true;
  if (S.ws) { try { S.ws.close(); } catch (e) {} }
  S.live = false;
  toast('Connected over USB');
+}
+/* Re-open a device this page was already allowed to use (after a replug / reboot, or on load). Silent. */
+async function usbReconnect() {
+ if (USB.dev || !navigator.usb || now() - USB.lastTry < 1000) return;
+ USB.lastTry = now();
+ try {
+  const devs = await navigator.usb.getDevices();
+  const d = devs.find(x => USB_IDS.some(f => x.vendorId === f.vendorId && x.productId === f.productId));
+  if (d) await usbConnect(d);
+ } catch (e) { /* not there yet, or still enumerating: the next request tries again */ }
 }
 async function usbRpc(method, path, body) {
  const d = USB.dev;
@@ -337,6 +348,7 @@ async function usbRpc(method, path, body) {
 }
 if (navigator.usb) {
  navigator.usb.addEventListener('disconnect', e => { if (USB.dev && e.device === USB.dev) { USB.dev = null; toast('USB disconnected'); } });
+ navigator.usb.addEventListener('connect', () => { if (USB.want) usbReconnect(); });
 }
 
 let toastT;
@@ -1237,6 +1249,8 @@ async function boot() {
  $('#nav').append(...PAGES.map(([id, t, ic]) => h('button', {'data-p': id, onclick: () => go(id, true)},
   svg('0 0 20 20', ic), h('span', {text: t}))));
  let tries = 0;
+ if (navigator.usb && !location.protocol.startsWith('http')) USB.want = true;   /* opened as a file: USB is the only way */
+ if (navigator.usb) { try { const d = (await navigator.usb.getDevices()).find(x => x.vendorId === 0x303a && x.productId === 0x4a57); if (d) await usbConnect(d); } catch (e) {} }
  for (;;) {
   try {
    const [p, st, info] = await Promise.all([get('/api/params'), get('/api/state'), get('/api/info')]);
