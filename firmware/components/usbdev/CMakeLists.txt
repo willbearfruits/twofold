@@ -3,7 +3,7 @@
 idf_component_register(SRCS "usbdev.c" "usb_descriptors.c" "usb_midi.c"
                        INCLUDE_DIRS "include" "tusb_config"
                        REQUIRES espressif__tinyusb esp_timer
-                       PRIV_REQUIRES usb params esp_hw_support log freertos
+                       PRIV_REQUIRES bootdiag usb params hal esp_driver_gpio esp_hw_support log freertos
                        LDFRAGMENTS "linker.lf"
                        # TinyUSB calls our descriptor/class callbacks (and has weak defaults for some):
                        # link every object so the strong definitions always win.

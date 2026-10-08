@@ -54,6 +54,10 @@
 #include "esp_system.h"
 #include "soc/rtc_cntl_reg.h"
 #include "soc/usb_serial_jtag_reg.h"
+#include "hal/usb_serial_jtag_ll.h"
+#include "esp_private/periph_ctrl.h"
+#include "driver/gpio.h"
+#include "bootdiag.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -369,12 +373,35 @@ esp_err_t usbdev_init(void)
 
 void usbdev_reboot_to_bootloader(void)
 {
-    tud_disconnect();                                   /* pull-up off: the host sees a detach */
-    vTaskDelay(pdMS_TO_TICKS(200));
-    /* USB pads back to USB-Serial/JTAG on the internal PHY */
+    bootdiag_crumb("BL DETACH");
+    tud_disconnect();                                   /* OTG pull-up off */
+    vTaskDelay(pdMS_TO_TICKS(20));
+    if (s_phy) { usb_del_phy(s_phy); s_phy = NULL; }    /* OTG off the pads */
+    /* SE0 for 100 ms: D-/D+ (GPIO19/20) driven low as plain GPIOs, so the host registers a clean detach */
     CLEAR_PERI_REG_MASK(RTC_CNTL_USB_CONF_REG, RTC_CNTL_SW_HW_USB_PHY_SEL | RTC_CNTL_SW_USB_PHY_SEL | RTC_CNTL_USB_PAD_ENABLE);
-    CLEAR_PERI_REG_MASK(USB_SERIAL_JTAG_CONF0_REG, USB_SERIAL_JTAG_PHY_SEL);
-    SET_PERI_REG_MASK(USB_SERIAL_JTAG_CONF0_REG, USB_SERIAL_JTAG_USB_PAD_ENABLE);
+    PERIPH_RCC_ATOMIC() {                               /* IDF gated the USJ clock at boot (USJ unused) */
+        usb_serial_jtag_ll_enable_bus_clock(true);
+        usb_serial_jtag_ll_reset_register();
+    }
+    usb_serial_jtag_ll_phy_enable_pad(false);
+    usb_serial_jtag_ll_phy_enable_external(false);      /* internal PHY */
+    gpio_set_direction(GPIO_NUM_19, GPIO_MODE_OUTPUT_OD);
+    gpio_set_direction(GPIO_NUM_20, GPIO_MODE_OUTPUT_OD);
+    gpio_set_level(GPIO_NUM_19, 0);
+    gpio_set_level(GPIO_NUM_20, 0);
+    bootdiag_crumb("BL SE0");
+    vTaskDelay(pdMS_TO_TICKS(100));
+    gpio_reset_pin(GPIO_NUM_19);
+    gpio_reset_pin(GPIO_NUM_20);
+    /* hand the pads to USB-Serial/JTAG and wait (<= 1 s) for the host to reset the bus: it has seen us */
+    REG_WRITE(USB_SERIAL_JTAG_INT_CLR_REG, USB_SERIAL_JTAG_USB_BUS_RESET_INT_CLR);
+    usb_serial_jtag_ll_phy_enable_pad(true);
+    bootdiag_crumb("BL USJ");
+    for (int i = 0; i < 100; i++) {
+        if (REG_READ(USB_SERIAL_JTAG_INT_RAW_REG) & USB_SERIAL_JTAG_USB_BUS_RESET_INT_RAW) break;
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    bootdiag_crumb("BL RESTART");
     REG_WRITE(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);   /* consumed by the ROM on the next boot */
     esp_restart();
 }

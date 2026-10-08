@@ -33,6 +33,8 @@ static char        s_note[32];
 static const char *s_note_p;
 static char        s_why[12];
 static char        s_last_crumb[16];
+static char        s_prev_crumb[16];   /* last crumb of the previous boot, whatever the reset reason */
+static int         s_reason;
 static bool        s_have_panic;
 
 extern bool  g_panic_abort;
@@ -78,6 +80,8 @@ void bootdiag_init(void)
     default: break;
     }
     bool const have = s_magic == CRUMB_MAGIC && s_crumb[0] && memchr(s_crumb, 0, sizeof s_crumb);
+    s_reason = (int)esp_reset_reason();
+    snprintf(s_prev_crumb, sizeof s_prev_crumb, "%s", have ? s_crumb : "-");
     s_have_panic = why && s_pan.magic == PANIC_MAGIC && memchr(s_pan.reason, 0, sizeof s_pan.reason) &&
                    s_pan.n <= BT_DEPTH;
     if (why) {
@@ -108,7 +112,8 @@ size_t bootdiag_report(char *buf, size_t n)
 {
     if (!n) return 0;
     int k;
-    if (!s_note_p) k = snprintf(buf, n, "OK: last boot normal | heap int %u (largest %u, min %u) psram %u",
+    if (!s_note_p) k = snprintf(buf, n, "OK: last boot normal (reset reason %d, previous boot's last step %s) | heap int %u (largest %u, min %u) psram %u",
+                                s_reason, s_prev_crumb,
                                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
                                 (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
