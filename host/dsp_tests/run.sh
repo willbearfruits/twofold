@@ -19,6 +19,7 @@ run limtransp_off "$RAW" >/dev/null; run limtransp_on "$RAW"
 for d in 1.0 2.2 6.0; do run reverb$d "$RAW"; done
 for d in 00 01 21 60; do run delay$d "$RAW"; done
 for a in "5000 12 -12" "9000 12 -12" "9000 6 -6" "13000 12 -12" "9000 24 -6" "13000 24 -6"; do run satalias "$RAW" $a; done
+run eqlf "$RAW"; run loud "$RAW"; run xfmono "$RAW"; run xfstereo "$RAW"
 run dither "$RAW"; run bitperfect "$RAW"
 NP=$("$T" nparams "$RAW")
 : > "$RAW/clicks.txt"

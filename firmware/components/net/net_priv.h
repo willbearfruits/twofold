@@ -26,7 +26,7 @@
  * Plenty for a desk/studio room, ~9 dB below the S3's default 20 dBm: less supply ripple next to
  * the analog stages and less 2.4 GHz noise. */
 #define NET_WIFI_TX_POWER_QDBM 44
-#define NET_MIN_INTERNAL_HEAP  (56 * 1024)   /* refuse WiFi below this (driver + lwIP + httpd + DNS + mDNS) */
+#define NET_MIN_INTERNAL_HEAP  (104 * 1024)  /* refuse WiFi below this: AP + portal + httpd measured at ~96 KB internal */
 
 /* STA connect attempts before falling back to the AP setup portal. */
 #define NET_STA_RETRIES_FIRST  5    /* never connected since enable (bad password, wrong SSID...) */
@@ -71,6 +71,11 @@ void        net_meters_json(jw_t *w);              /* meters + CPU fields */
 /* Apply one parameter write coming from the web (handles the special net.* keys). Returns
  * 0 ok, 404 unknown key, 400 bad value. */
 int         net_api_set_param(const char *key, double v, float *applied);
+/* Same API without HTTP (USB transport): returns 0 + JSON in w, or an HTTP-style status + *err. *after (may be
+ * NULL) must be called after the response has been sent (commands that take a transport down). */
+int         net_api_dispatch(const char *method, const char *path, const char *body, size_t body_len, jw_t *w,
+                             const char **err, void (**after)(void));
+esp_err_t   net_usb_start(void);                   /* the WebUSB/WinUSB control channel (always on) */
 
 /* ---- net_ws.c ---- */
 esp_err_t   net_ws_register(httpd_handle_t hd);

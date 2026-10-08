@@ -258,20 +258,15 @@ int net_api_set_param(const char *key, double v, float *applied)
     return 0;
 }
 
-static esp_err_t h_param(httpd_req_t *req)
+/* {"key","value"} or {"values":{key:value,...}} -> {"ok":true,"values":{key:applied}}; 0 or an HTTP status. */
+static int param_apply(cJSON *j, jw_t *w, const char **err)
 {
-    cJSON *j = read_json(req, BODY_MAX_PARAMS);
-    if (!j) return ESP_OK;
-    char b[1024];
-    jw_t w;
-    jw_init(&w, b, sizeof b, NULL);
-    jw_obj(&w, NULL);
-    jw_bool(&w, "ok", true);
-    jw_obj(&w, "values");
+    jw_obj(w, NULL);
+    jw_bool(w, "ok", true);
+    jw_obj(w, "values");
     int status = 0;
     const cJSON *vals = cJSON_GetObjectItemCaseSensitive(j, "values");
     if (cJSON_IsObject(vals)) {
-        /* batch: {"values":{"eq.b2.freq":1200,"eq.b2.gain":3}} */
         int n = 0;
         for (const cJSON *it = vals->child; it && !status; it = it->next) {
             if (++n > 64) { status = 400; break; }
@@ -281,7 +276,7 @@ static esp_err_t h_param(httpd_req_t *req)
             else { status = 400; break; }
             float a;
             status = net_api_set_param(it->string, v, &a);
-            if (!status) jw_num(&w, it->string, a, 7);
+            if (!status) jw_num(w, it->string, a, 7);
         }
     } else {
         const char *key = j_str(j, "key", KEY_MAX);
@@ -290,17 +285,36 @@ static esp_err_t h_param(httpd_req_t *req)
         else {
             float a;
             status = net_api_set_param(key, v, &a);
-            if (!status) jw_num(&w, key, a, 7);
+            if (!status) jw_num(w, key, a, 7);
         }
     }
-    jw_obj_end(&w);
-    jw_obj_end(&w);
-    cJSON_Delete(j);
-    if (status) return net_send_err(req, status, status == 404 ? "unknown parameter" : "bad parameter/value");
-    if (jw_finish(&w) != ESP_OK) return net_send_ok(req);
-    net_json_headers(req);
-    return httpd_resp_send(req, b, HTTPD_RESP_USE_STRLEN);
+    jw_obj_end(w);
+    jw_obj_end(w);
+    if (status) *err = status == 404 ? "unknown parameter" : "bad parameter/value";
+    return status;
 }
+
+/* HTTP glue for the *_apply functions: body -> JSON -> apply into a buffer -> send. */
+typedef int (*apply_fn_t)(cJSON *j, jw_t *w, const char **err);
+static esp_err_t run_apply(httpd_req_t *req, size_t max, apply_fn_t fn)
+{
+    cJSON *j = read_json(req, max);
+    if (!j) return ESP_OK;
+    char *b = malloc(2048);
+    if (!b) { cJSON_Delete(j); return net_send_err(req, 500, "no memory"); }
+    jw_t w;
+    jw_init(&w, b, 2048, NULL);
+    const char *err = "error";
+    int status = fn(j, &w, &err);
+    cJSON_Delete(j);
+    esp_err_t e;
+    if (status) e = net_send_err(req, status, err);
+    else if (jw_finish(&w) != ESP_OK) e = net_send_ok(req);
+    else { net_json_headers(req); e = httpd_resp_send(req, b, HTTPD_RESP_USE_STRLEN); }
+    free(b);
+    return e;
+}
+static esp_err_t h_param(httpd_req_t *req) { return run_apply(req, BODY_MAX_PARAMS, param_apply); }
 
 /* ------------------------------------------------------------------ presets */
 /* Mirror of the params blob layout (params.c: "TFP1" v1, header + n * {u32 key_hash, f32 value}).
@@ -341,102 +355,117 @@ static void presets_body(jw_t *w, void *ctx)
 }
 static esp_err_t h_presets(httpd_req_t *req) { return send_obj(req, presets_body, NULL); }
 
-static esp_err_t h_preset_op(httpd_req_t *req)
+static int preset_op_apply(const char *op, cJSON *j, jw_t *w, const char **err)
 {
-    const char *op = strrchr(req->uri, '/');
-    op = op ? op + 1 : "";
-    cJSON *j = read_json(req, BODY_MAX_SMALL);
-    if (!j) return ESP_OK;
     int slot;
     char name[PRESET_NAME_LEN];
     const char *nm = j_str(j, "name", 64);
     bool has_name = nm && clean_name(nm, name);
     bool ok = false;
-    const char *err = "bad request";
+    *err = "bad request";
     if (!j_int(j, "slot", 0, PRESET_SLOTS - 1, &slot)) {
-        err = "slot must be 0..7";
+        *err = "slot must be 0..7";
     } else if (!strcmp(op, "load")) {
         ok = storage_preset_load(slot);
-        err = "load failed";
+        *err = "load failed";
     } else if (!strcmp(op, "save")) {
         ok = storage_preset_save(slot, has_name ? name : NULL);   /* soft-muted write in storage */
-        err = "save failed";
+        *err = "save failed";
     } else if (!strcmp(op, "rename")) {
-        if (!has_name) err = "invalid name";
-        else { ok = storage_preset_rename(slot, name); err = "rename failed"; }
+        if (!has_name) *err = "invalid name";
+        else { ok = storage_preset_rename(slot, name); *err = "rename failed"; }
     }
-    cJSON_Delete(j);
-    if (!ok) return net_send_err(req, 400, err);
-    return send_obj(req, presets_body, NULL);
+    if (!ok) return 400;
+    jw_obj(w, NULL); presets_body(w, NULL); jw_obj_end(w);
+    return 0;
+}
+static int preset_load_apply(cJSON *j, jw_t *w, const char **e)   { return preset_op_apply("load", j, w, e); }
+static int preset_save_apply(cJSON *j, jw_t *w, const char **e)   { return preset_op_apply("save", j, w, e); }
+static int preset_rename_apply(cJSON *j, jw_t *w, const char **e) { return preset_op_apply("rename", j, w, e); }
+static esp_err_t h_preset_op(httpd_req_t *req)
+{
+    const char *op = strrchr(req->uri, '/');
+    op = op ? op + 1 : "";
+    return run_apply(req, BODY_MAX_SMALL, !strcmp(op, "load") ? preset_load_apply :
+                     !strcmp(op, "save") ? preset_save_apply : preset_rename_apply);
 }
 
-static esp_err_t h_preset_export(httpd_req_t *req)
+static int preset_export_body(int slot, jw_t *w, const char **err)
 {
-    char q[32], v[8];
-    int slot = -1;
-    if (httpd_req_get_url_query_str(req, q, sizeof q) == ESP_OK && httpd_query_key_value(q, "slot", v, sizeof v) == ESP_OK) {
-        char *end;
-        long s = strtol(v, &end, 10);
-        if (*end == 0 && s >= 0 && s < PRESET_SLOTS) slot = (int)s;
-    }
-    if (slot < 0) return net_send_err(req, 400, "slot must be 0..7");
-    if (!blob_layout_ok()) return net_send_err(req, 500, "preset format changed; update net_api.c");
+    if (slot < 0 || slot >= PRESET_SLOTS) { *err = "slot must be 0..7"; return 400; }
+    if (!blob_layout_ok()) { *err = "preset format changed; update net_api.c"; return 500; }
     size_t cap = params_blob_max(PF_PRESET);
     uint8_t *blob = malloc(cap);
-    if (!blob) return net_send_err(req, 500, "no memory");
+    if (!blob) { *err = "no memory"; return 500; }
     size_t n = storage_preset_export(slot, blob, cap);
     pblob_hdr_t h;
-    if (n < sizeof h) { free(blob); return net_send_err(req, 404, "slot empty"); }
+    if (n < sizeof h) { free(blob); *err = "slot empty"; return 404; }
     memcpy(&h, blob, sizeof h);
     if (h.magic != PBLOB_MAGIC || h.version != PBLOB_VERSION || n < sizeof h + (size_t)h.count * sizeof(pblob_kv_t)) {
         free(blob);
-        return net_send_err(req, 500, "unrecognised preset blob");
+        *err = "unrecognised preset blob";
+        return 500;
     }
     char name[PRESET_NAME_LEN + 1];
     memcpy(name, h.name, PRESET_NAME_LEN);
     name[PRESET_NAME_LEN] = 0;
-
-    char *b = malloc(1024);
-    if (!b) { free(blob); return net_send_err(req, 500, "no memory"); }
-    jw_t w;
-    jw_init(&w, b, 1024, req);
-    net_json_headers(req);
-    jw_obj(&w, NULL);
-    jw_str(&w, "format", "twofold-preset");
-    jw_int(&w, "version", 1);
-    jw_str(&w, "name", name);
-    jw_int(&w, "slot", slot);
-    jw_str(&w, "fw", esp_app_get_description()->version);
-    jw_obj(&w, "params");
+    jw_obj(w, NULL);
+    jw_str(w, "format", "twofold-preset");
+    jw_int(w, "version", 1);
+    jw_str(w, "name", name);
+    jw_int(w, "slot", slot);
+    jw_str(w, "fw", esp_app_get_description()->version);
+    jw_obj(w, "params");
     for (int k = 0; k < h.count; k++) {
         pblob_kv_t kv;
         memcpy(&kv, blob + sizeof h + (size_t)k * sizeof kv, sizeof kv);
         for (int i = 0; i < P_COUNT; i++) {
             if ((g_param_desc[i].flags & PF_PRESET) && params_key_hash(g_param_desc[i].key) == kv.hash) {
-                jw_num(&w, g_param_desc[i].key, kv.value, 7);
+                jw_num(w, g_param_desc[i].key, kv.value, 7);
                 break;
             }
         }
     }
-    jw_obj_end(&w);
-    jw_obj_end(&w);
-    esp_err_t e = jw_finish(&w);
-    free(b);
+    jw_obj_end(w);
+    jw_obj_end(w);
     free(blob);
+    return 0;
+}
+
+static int query_slot(const char *q)
+{
+    char v[8];
+    if (!q || httpd_query_key_value(q, "slot", v, sizeof v) != ESP_OK) return -1;
+    char *end;
+    long s = strtol(v, &end, 10);
+    return (*end == 0 && s >= 0 && s < PRESET_SLOTS) ? (int)s : -1;
+}
+
+static esp_err_t h_preset_export(httpd_req_t *req)
+{
+    char q[32] = "";
+    httpd_req_get_url_query_str(req, q, sizeof q);
+    char *b = malloc(1024);
+    if (!b) return net_send_err(req, 500, "no memory");
+    jw_t w;
+    jw_init(&w, b, 1024, req);
+    net_json_headers(req);
+    const char *err = "error";
+    int status = preset_export_body(query_slot(q), &w, &err);
+    esp_err_t e = status ? net_send_err(req, status, err) : jw_finish(&w);
+    free(b);
     return e;
 }
 
-static esp_err_t h_preset_import(httpd_req_t *req)
+static int preset_import_apply(cJSON *j, jw_t *w, const char **err)
 {
-    if (!blob_layout_ok()) return net_send_err(req, 500, "preset format changed; update net_api.c");
-    cJSON *j = read_json(req, BODY_MAX_IMPORT);
-    if (!j) return ESP_OK;
+    if (!blob_layout_ok()) { *err = "preset format changed; update net_api.c"; return 500; }
     int slot;
     const cJSON *pv = cJSON_GetObjectItemCaseSensitive(j, "params");
     const char *fmt = j_str(j, "format", 32);
     if (!j_int(j, "slot", 0, PRESET_SLOTS - 1, &slot) || !cJSON_IsObject(pv) || (fmt && strcmp(fmt, "twofold-preset"))) {
-        cJSON_Delete(j);
-        return net_send_err(req, 400, "expected {slot, params:{...}} (format twofold-preset)");
+        *err = "expected {slot, params:{...}} (format twofold-preset)";
+        return 400;
     }
     pblob_hdr_t h = { .magic = PBLOB_MAGIC, .version = PBLOB_VERSION, .count = 0 };
     memset(h.name, 0, sizeof h.name);
@@ -444,10 +473,9 @@ static esp_err_t h_preset_import(httpd_req_t *req)
         memcpy(h.name, "IMPORT ", 7);
         h.name[7] = (char)('1' + slot);
     }
-
     size_t cap = params_blob_max(PF_PRESET);
     uint8_t *blob = malloc(cap);
-    if (!blob) { cJSON_Delete(j); return net_send_err(req, 500, "no memory"); }
+    if (!blob) { *err = "no memory"; return 500; }
     int used = 0, known = 0;
     size_t off = sizeof h;
     for (int i = 0; i < P_COUNT; i++) {
@@ -466,37 +494,36 @@ static esp_err_t h_preset_import(httpd_req_t *req)
     }
     for (const cJSON *it = pv->child; it; it = it->next) known++;
     memcpy(blob, &h, sizeof h);
-    cJSON_Delete(j);
     bool ok = storage_preset_import(slot, blob, off);
     free(blob);
-    if (!ok) return net_send_err(req, 500, "import failed");
+    if (!ok) { *err = "import failed"; return 500; }
     ESP_LOGI(TAG, "preset import slot %d: %d of %d keys used", slot, used, known);
-    char r[96];
-    snprintf(r, sizeof r, "{\"ok\":true,\"slot\":%d,\"used\":%d,\"ignored\":%d}", slot, used, known - used);
-    net_json_headers(req);
-    return httpd_resp_send(req, r, HTTPD_RESP_USE_STRLEN);
+    jw_obj(w, NULL);
+    jw_bool(w, "ok", true); jw_int(w, "slot", slot); jw_int(w, "used", used); jw_int(w, "ignored", known - used);
+    jw_obj_end(w);
+    return 0;
 }
+static esp_err_t h_preset_import(httpd_req_t *req) { return run_apply(req, BODY_MAX_IMPORT, preset_import_apply); }
 
 /* ------------------------------------------------------------------ MIDI CC map */
 static void ccmap_body(jw_t *w, void *ctx) { ccmap_json(w); }
 static esp_err_t h_ccmap_get(httpd_req_t *req) { return send_obj(req, ccmap_body, NULL); }
 
-static esp_err_t h_ccmap_set(httpd_req_t *req)
+static int ccmap_set_apply(cJSON *j, jw_t *w, const char **err)
 {
-    cJSON *j = read_json(req, BODY_MAX_SMALL);
-    if (!j) return ESP_OK;
     const char *key = j_str(j, "key", KEY_MAX);
     const cJSON *ccj = cJSON_GetObjectItemCaseSensitive(j, "cc");
     param_id_t id = key ? params_find(key) : P_COUNT;
     int cc = -2;
     if (cJSON_IsNull(ccj)) cc = -1;
     else j_int(j, "cc", -1, 127, &cc);
-    cJSON_Delete(j);
-    if (id == P_COUNT) return net_send_err(req, 404, "unknown parameter");
-    if (cc < -1) return net_send_err(req, 400, "cc must be 0..127 or null");
+    if (id == P_COUNT) { *err = "unknown parameter"; return 404; }
+    if (cc < -1) { *err = "cc must be 0..127 or null"; return 400; }
     params_cc_assign(id, cc < 0 ? NO_CC : (uint8_t)cc);
-    return send_obj(req, ccmap_body, NULL);
+    jw_obj(w, NULL); ccmap_body(w, NULL); jw_obj_end(w);
+    return 0;
 }
+static esp_err_t h_ccmap_set(httpd_req_t *req) { return run_apply(req, BODY_MAX_SMALL, ccmap_set_apply); }
 
 static esp_err_t h_ccmap_reset(httpd_req_t *req)
 {
@@ -520,18 +547,17 @@ static esp_err_t h_wifi_scan(httpd_req_t *req)
     return net_send_ok(req);
 }
 
-static esp_err_t h_wifi_connect(httpd_req_t *req)
+static int wifi_connect_apply(cJSON *j, jw_t *w, const char **err)
 {
-    cJSON *j = read_json(req, BODY_MAX_SMALL);
-    if (!j) return ESP_OK;
     const char *ssid = j_str(j, "ssid", 32);
     const char *pass = cJSON_GetObjectItemCaseSensitive(j, "pass") ? j_str(j, "pass", 64) : "";
     esp_err_t e = (ssid && pass) ? net_wifi_request_connect(ssid, pass) : ESP_ERR_INVALID_ARG;
-    cJSON_Delete(j);
-    if (e == ESP_ERR_INVALID_ARG) return net_send_err(req, 400, "SSID 1-32 bytes, password empty or 8-64 characters");
-    if (e != ESP_OK) return net_send_err(req, 503, "busy");
-    return net_send_ok(req);
+    if (e == ESP_ERR_INVALID_ARG) { *err = "SSID 1-32 bytes, password empty or 8-64 characters"; return 400; }
+    if (e != ESP_OK) { *err = "busy"; return 503; }
+    jw_obj(w, NULL); jw_bool(w, "ok", true); jw_obj_end(w);
+    return 0;
 }
+static esp_err_t h_wifi_connect(httpd_req_t *req) { return run_apply(req, BODY_MAX_SMALL, wifi_connect_apply); }
 
 static esp_err_t h_wifi_forget(httpd_req_t *req)
 {
@@ -540,39 +566,53 @@ static esp_err_t h_wifi_forget(httpd_req_t *req)
 }
 
 /* ------------------------------------------------------------------ commands */
-static esp_err_t h_cmd(httpd_req_t *req)
+typedef enum { AFTER_NONE, AFTER_WIFI_OFF, AFTER_REBOOT, AFTER_FACTORY, AFTER_WIFI_SETUP } after_t;
+
+static int cmd_apply(cJSON *j, jw_t *w, const char **err, after_t *after)
 {
-    cJSON *j = read_json(req, BODY_MAX_SMALL);
-    if (!j) return ESP_OK;
     const char *c = j_str(j, "cmd", 24);
     int arg = 0;
     j_int(j, "arg", -1000000, 1000000, &arg);
     char cmd[25];
     snprintf(cmd, sizeof cmd, "%s", c ? c : "");
-    cJSON_Delete(j);
+    *after = AFTER_NONE;
+    if (!strcmp(cmd, "studio") || !strcmp(cmd, "wifi_off")) *after = AFTER_WIFI_OFF;
+    else if (!strcmp(cmd, "reboot")) *after = AFTER_REBOOT;
+    else if (!strcmp(cmd, "factory_reset")) *after = AFTER_FACTORY;
+    else if (!strcmp(cmd, "wifi_setup")) *after = AFTER_WIFI_SETUP;
+    else if (!strcmp(cmd, "wifi_on")) sys_cmd(SYS_CMD_WIFI_ENABLE, 1);
+    else if (!strcmp(cmd, "ble")) sys_cmd(SYS_CMD_BLE_ENABLE, arg ? 1 : 0);
+    else if (!strcmp(cmd, "flush")) storage_flush_now();
+    else { *err = "unknown cmd"; return 400; }
+    jw_obj(w, NULL); jw_bool(w, "ok", true); jw_obj_end(w);
+    return 0;
+}
 
-    /* Respond first: some commands take the network down. */
-    if (!strcmp(cmd, "studio") || !strcmp(cmd, "wifi_off")) {
-        net_send_ok(req);
-        sys_cmd(SYS_CMD_WIFI_ENABLE, 0);          /* teardown is async and waits for this handler */
-    } else if (!strcmp(cmd, "reboot")) {
-        net_send_ok(req);
-        sys_cmd(SYS_CMD_REBOOT, 0);
-    } else if (!strcmp(cmd, "factory_reset")) {
-        net_send_ok(req);
-        sys_cmd(SYS_CMD_FACTORY_RESET, 0);
-    } else if (!strcmp(cmd, "ble")) {
-        sys_cmd(SYS_CMD_BLE_ENABLE, arg ? 1 : 0);
-        net_send_ok(req);
-    } else if (!strcmp(cmd, "flush")) {
-        storage_flush_now();
-        net_send_ok(req);
-    } else if (!strcmp(cmd, "wifi_setup")) {
-        net_send_ok(req);
-        net_wifi_setup();
-    } else {
-        return net_send_err(req, 400, "unknown cmd");
+static void cmd_after(after_t a)
+{
+    switch (a) {
+    case AFTER_WIFI_OFF:   sys_cmd(SYS_CMD_WIFI_ENABLE, 0); break;   /* teardown is async and waits for the handler */
+    case AFTER_REBOOT:     sys_cmd(SYS_CMD_REBOOT, 0); break;
+    case AFTER_FACTORY:    sys_cmd(SYS_CMD_FACTORY_RESET, 0); break;
+    case AFTER_WIFI_SETUP: net_wifi_setup(); break;
+    default: break;
     }
+}
+
+static esp_err_t h_cmd(httpd_req_t *req)
+{
+    cJSON *j = read_json(req, BODY_MAX_SMALL);
+    if (!j) return ESP_OK;
+    char b[128];
+    jw_t w;
+    jw_init(&w, b, sizeof b, NULL);
+    const char *err = "error";
+    after_t after;
+    int status = cmd_apply(j, &w, &err, &after);
+    cJSON_Delete(j);
+    if (status) return net_send_err(req, status, err);
+    net_send_ok(req);                            /* respond first: some commands take the network down */
+    cmd_after(after);
     return ESP_OK;
 }
 
@@ -684,4 +724,54 @@ esp_err_t net_api_register(httpd_handle_t hd)
         if (e != ESP_OK) ESP_LOGE(TAG, "register %s: %s", uris[i].uri, esp_err_to_name(e));
     }
     return ESP_OK;
+}
+
+static after_t s_pending_after;
+static void run_pending_after(void) { after_t a = s_pending_after; s_pending_after = AFTER_NONE; cmd_after(a); }
+
+/* ------------------------------------------------------------------ transport-independent dispatcher (USB)
+ * Same API as HTTP: method + path(+query) + JSON body -> status + JSON into a buffer-mode writer. */
+typedef struct { const char *path; void (*body)(jw_t *, void *); } get_route_t;
+static const get_route_t k_gets[] = {
+    { "/api/params", params_body }, { "/api/state", state_body }, { "/api/meters", meters_body },
+    { "/api/info", info_body }, { "/api/presets", presets_body }, { "/api/ccmap", ccmap_body }, { "/api/wifi", wifi_body },
+};
+typedef struct { const char *path; apply_fn_t fn; size_t max; } post_route_t;
+static const post_route_t k_posts[] = {
+    { "/api/param", param_apply, BODY_MAX_PARAMS }, { "/api/preset/load", preset_load_apply, BODY_MAX_SMALL },
+    { "/api/preset/save", preset_save_apply, BODY_MAX_SMALL }, { "/api/preset/rename", preset_rename_apply, BODY_MAX_SMALL },
+    { "/api/preset/import", preset_import_apply, BODY_MAX_IMPORT }, { "/api/ccmap", ccmap_set_apply, BODY_MAX_SMALL },
+    { "/api/wifi/connect", wifi_connect_apply, BODY_MAX_SMALL },
+};
+
+int net_api_dispatch(const char *method, const char *path, const char *body, size_t body_len, jw_t *w, const char **err,
+                     void (**after)(void))
+{
+    *after = NULL;
+    char p[64];
+    snprintf(p, sizeof p, "%s", path);
+    char *q = strchr(p, '?');
+    if (q) *q++ = 0;
+    if (!strcmp(method, "GET")) {
+        for (size_t i = 0; i < sizeof k_gets / sizeof k_gets[0]; i++)
+            if (!strcmp(p, k_gets[i].path)) { jw_obj(w, NULL); k_gets[i].body(w, NULL); jw_obj_end(w); return 0; }
+        if (!strcmp(p, "/api/preset/export")) return preset_export_body(query_slot(q), w, err);
+        *err = "not found"; return 404;
+    }
+    if (strcmp(method, "POST")) { *err = "method"; return 405; }
+    cJSON *j = cJSON_ParseWithLength(body, body_len);
+    if (!cJSON_IsObject(j)) { cJSON_Delete(j); *err = "invalid JSON"; return 400; }
+    int status = 404;
+    *err = "not found";
+    if (!strcmp(p, "/api/cmd")) {
+        status = cmd_apply(j, w, err, &s_pending_after);
+        if (!status && s_pending_after != AFTER_NONE) *after = run_pending_after;
+    } else if (!strcmp(p, "/api/ccmap/reset")) { params_cc_reset(); jw_obj(w, NULL); ccmap_body(w, NULL); jw_obj_end(w); status = 0; }
+    else if (!strcmp(p, "/api/ccmap/save")) { storage_flush_now(); jw_obj(w, NULL); jw_bool(w, "ok", true); jw_obj_end(w); status = 0; }
+    else if (!strcmp(p, "/api/wifi/scan")) { status = net_wifi_request_scan() == ESP_OK ? 0 : 503; if (status) *err = "WiFi busy"; else { jw_obj(w, NULL); jw_bool(w, "ok", true); jw_obj_end(w); } }
+    else if (!strcmp(p, "/api/wifi/forget")) { net_wifi_forget(); jw_obj(w, NULL); jw_bool(w, "ok", true); jw_obj_end(w); status = 0; }
+    else for (size_t i = 0; i < sizeof k_posts / sizeof k_posts[0]; i++)
+        if (!strcmp(p, k_posts[i].path)) { if (body_len > k_posts[i].max) { status = 413; *err = "body too large"; } else status = k_posts[i].fn(j, w, err); break; }
+    cJSON_Delete(j);
+    return status;
 }

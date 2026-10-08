@@ -1,0 +1,3 @@
+# TWOFOLD USB audio interface: let regular users open the WebUSB/WinUSB control interface (Chrome WebUSB, tools/twofold_usb.py).
+# Install: sudo cp tools/99-twofold.rules /etc/udev/rules.d/ && sudo udevadm control --reload && replug the device.
+SUBSYSTEM=="usb", ATTR{idVendor}=="303a", ATTR{idProduct}=="4a57", MODE="0666", TAG+="uaccess"

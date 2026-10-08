@@ -9,6 +9,8 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"
+#include "esp_heap_caps.h"
 
 static const char *TAG = "led";
 
@@ -115,7 +117,7 @@ esp_err_t led_init(void)
         return err;
     }
     led_strip_clear(s_strip);
-    if (xTaskCreatePinnedToCore(led_task, "led", LED_TASK_STACK, NULL, LED_TASK_PRIO, NULL, LED_TASK_CORE) != pdPASS)
+    if (xTaskCreatePinnedToCoreWithCaps(led_task, "led", LED_TASK_STACK, NULL, LED_TASK_PRIO, NULL, LED_TASK_CORE, (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)) != pdPASS)
         return ESP_ERR_NO_MEM;
     return ESP_OK;
 }

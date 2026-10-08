@@ -6,6 +6,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "lwip/sockets.h"
 #include "net_priv.h"
@@ -99,7 +101,7 @@ esp_err_t net_dns_start(uint32_t ip_be)
     if (!s_done) s_done = xSemaphoreCreateBinaryStatic(&s_done_buf);
     s_ip = ip_be;
     s_run = true;
-    if (xTaskCreatePinnedToCore(dns_task, "net_dns", 3072, NULL, 4, &s_task, 0) != pdPASS) {
+    if (xTaskCreatePinnedToCoreWithCaps(dns_task, "net_dns", 3072, NULL, 4, &s_task, 0, (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)) != pdPASS) {
         s_task = NULL;
         s_run = false;
         return ESP_ERR_NO_MEM;

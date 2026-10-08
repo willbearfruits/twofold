@@ -88,3 +88,14 @@ Parses every `#define BOARD_PIN_* <gpio> /* PIN: signal | module pin(s) | notes 
 `firmware/components/board/include/board_config.h`. Output is deterministic, with no timestamps, so
 re-running is idempotent. Fails if a GPIO is assigned twice. To change wiring, edit the header comments
 and re-run the script.
+
+## Device tools (USB, no WiFi needed)
+
+| tool | what |
+|---|---|
+| `flash.sh` | hands-free flash: asks the running firmware to reboot into the ROM bootloader (USB-MIDI SysEx `F0 7D 7E "BOOT" F7`), runs `idf.py flash`, restarts the app. `WAIT=600 tools/flash.sh` waits for a manual BOOT+RST. |
+| `twofold_status.sh` | live status: measured fs, CPU per DSP block (avg/max), active effects, xruns, I2S errors, USB feedback and FIFO levels, heap, task stack headroom, uptime, radio states |
+| `crash_report.sh` | last abnormal reset: reason, the step that was running, panic text and backtrace (symbolised against `firmware/build/twofold.elf`) |
+| `twofold_sysex.sh` | the shared request/reply helper (SysEx `F0 7D <cmd> F7`, replies `F0 7D <cmd+1> <ascii> F7`); `05` = profile 3 s with interrupts masked, `07` = sub-stage cycles, `09 0x` / `0A 0x` = WiFi / BLE off/on |
+| `twofold_usb.py` | the web API over the USB vendor interface with libusb (`get /api/state`, `post /api/param '{...}'`, `watch`) |
+| `99-twofold.rules` | udev rule so a regular Linux user may open the vendor interface (WebUSB in Chrome, `twofold_usb.py`) |

@@ -18,6 +18,8 @@
 #include "dsp_comp.h"
 #include "dsp_limiter.h"
 #include "dsp_dither.h"
+#include "dsp_loud.h"
+#include "dsp_xfeed.h"
 #include "dsp_vec.h"
 #include "params.h"
 #include <string.h>
@@ -69,6 +71,8 @@ static struct {
     dsp_comp_t    cmp;
     dsp_limiter_t lim;
     dsp_dither_t  dith_dac, dith_rec;
+    dsp_loud_t    loud;
+    dsp_xfeed_t   xf;
 
     /* input */
     int        in_mode, in_from;
@@ -113,7 +117,7 @@ static int32_t      s_smute_cnt;
 static uint32_t     s_silent, s_quiet;
 static uint32_t     s_start_req_cnt, s_start_req_ms;
 static uint32_t     s_viz[5];
-static float        s_spec[DSP_SPECTRUM_RING];
+static float       *s_spec;              /* DSP_SPECTRUM_RING floats, PSRAM (sequential writes) */
 static uint32_t     s_spec_w;
 
 /* scratch (internal RAM, .bss) */
@@ -153,6 +157,8 @@ static void read_params(bool settle)
              params_get(P_CMP_MIX));
     /* limiter: 2 LSB below the ceiling so TPDF dither (+-1 LSB) can never cross it */
     lim_set(&E.lim, params_get_bool(P_LIM_ON), params_get(P_LIM_CEIL), 2.f * LSB24);
+    loud_set(&E.loud, params_get_bool(P_LOUD_ON), params_get(P_LOUD_REF), params_get(P_LOUD_AMT), params_get(P_VOLUME));
+    xf_set(&E.xf, params_get_bool(P_XF_ON), params_get(P_XF_FEED), params_get(P_XF_FC));
 
     /* input / monitor / master */
     const int mode = dsp_clampi(params_get_int(P_IN_MODE), 0, 3);
@@ -168,7 +174,7 @@ static void read_params(bool settle)
 
     if (settle) {
         eq_settle(&E.eq); sat_settle(&E.sat); cho_settle(&E.cho); dly_settle(&E.dly); rev_settle(&E.rev);
-        comp_settle(&E.cmp); lim_settle(&E.lim);
+        comp_settle(&E.cmp); lim_settle(&E.lim); loud_settle(&E.loud); xf_settle(&E.xf);
         sm_jump(&E.in_gain, E.in_gain.tgt); sm_jump(&E.mon_mix, E.mon_mix.tgt);
         E.mon_path = E.mon_path_tgt;
         sm_jump(&E.vol_db, E.vol_db.tgt);
@@ -183,10 +189,14 @@ int dsp_engine_init(const dsp_alloc_t *alloc)
     memset(&E, 0, sizeof E);
     eq_init(&E.eq);
     sat_init(&E.sat);
+    s_spec = (float *)alloc->alloc_big(DSP_SPECTRUM_RING * sizeof(float));
+    if (!s_spec) return -4;
     if (cho_init(&E.cho, alloc->alloc_hot ? alloc->alloc_hot : alloc->alloc_fast)) return -1;
     if (dly_init(&E.dly, alloc->alloc_big)) return -2;
     if (rev_init(&E.rev, alloc->alloc_fast, alloc->alloc_big)) return -3;
     comp_init(&E.cmp);
+    loud_init(&E.loud);
+    xf_init(&E.xf);
     lim_init(&E.lim, 60.f);
     dither_init(&E.dith_dac, 0x2545f491u);
     dither_init(&E.dith_rec, 0x9e3779b9u);
@@ -209,7 +219,7 @@ int dsp_engine_init(const dsp_alloc_t *alloc)
 void dsp_engine_reset(void)
 {
     eq_reset(&E.eq); sat_reset(&E.sat); cho_reset(&E.cho); dly_reset(&E.dly); rev_reset(&E.rev);
-    comp_reset(&E.cmp); lim_reset(&E.lim);
+    comp_reset(&E.cmp); lim_reset(&E.lim); loud_reset(&E.loud); xf_reset(&E.xf);
 }
 
 /* ------------------------------------------------------------------------------------------------ */
@@ -533,6 +543,9 @@ static DSP_HOT void process_block(const int32_t *play, const int32_t *adc, int32
             pR[i] = c * pR[i] + bb * aR[i];
         }
     }
+    /* listening: loudness compensation (follows the volume target) and headphone crossfeed; both exact bypass when off */
+    loud_process(&E.loud, pL, pR, &blk);
+    xf_process(&E.xf, pL, pR, &blk);
     {   /* spectrum tap: mono, post monitor blend, pre master volume / limiter */
         uint32_t w = RELAXED_LD(&s_spec_w);
         for (int i = 0; i < n; i++) s_spec[(w + (uint32_t)i) & (DSP_SPECTRUM_RING - 1)] = 0.5f * (pL[i] + pR[i]);
@@ -566,7 +579,7 @@ static DSP_HOT void process_block(const int32_t *play, const int32_t *adc, int32
     /* ---------- DITHER / DAC ---------- */
     const bool transparent = eq_is_identity(&E.eq) && !sat_active(&E.sat) && !cho_active(&E.cho) &&
                              !dly_running(&E.dly) && !rev_running(&E.rev) && !E.cmp.running && mon_off &&
-                             E.vol_db.cur == 0.f && E.vol_nz.v == 1.f && E.unmute.v == 1.f && E.start_g == 1.f &&
+                             E.vol_db.cur == 0.f && E.vol_nz.v == 1.f && E.unmute.v == 1.f && E.start_g == 1.f && !E.loud.active && !E.xf.active &&
                              E.lim.gr_max_db == 0.f;
     if (smute_full) {
         memset(dac, 0, (size_t)n * 2 * sizeof(int32_t));
@@ -597,6 +610,12 @@ static DSP_HOT void process_block(const int32_t *play, const int32_t *adc, int32
     RELAXED_ST(&s_viz[4], fbits(E.rev.energy > 1e-20f ? dsp_exp2(0.5f * dsp_log2(E.rev.energy)) : 0.f));
     publish_meters();
     prof_block(cyc, n);
+}
+
+void dsp_engine_dbg_eq_coefs(int band, float out[5])
+{
+    const biquad_coef_t *c = &E.eq.bq[band].c;
+    out[0] = c->b0; out[1] = c->b1; out[2] = c->b2; out[3] = c->a1; out[4] = c->a2;
 }
 
 uint32_t g_dsp_dbg[DSP_DBG_N];

@@ -15,6 +15,8 @@
 #include "params.h"
 #include "rbj.h"
 #include "dsp_sat.h"   /* SAT_OS */
+#include "dsp_loud.h"
+#include "dsp_xfeed.h"
 
 #define FS 48000
 #define BLK 32
@@ -638,13 +640,164 @@ static int test_bench(void)
     return 0;
 }
 
+
+/* ------------------------------------------------------------------------------------------------ */
+/* EQ low-frequency precision: float TDF-II cascade vs a double-precision reference with the same coefficients. */
+static int test_eq_lf(void)
+{
+    base_params(false);
+    params_set(P_EQ_B1_FREQ, 20, SRC_INIT); params_set(P_EQ_B1_GAIN, 18, SRC_INIT); params_set(P_EQ_B1_Q, 0.71f, SRC_INIT);
+    params_set(P_EQ_B2_FREQ, 30, SRC_INIT); params_set(P_EQ_B2_GAIN, 18, SRC_INIT); params_set(P_EQ_B2_Q, 10, SRC_INIT);
+    params_set(P_EQ_B3_FREQ, 60, SRC_INIT); params_set(P_EQ_B3_GAIN, -18, SRC_INIT); params_set(P_EQ_B3_Q, 8, SRC_INIT);
+    engine_start();
+    const int N = FS * 6;
+    float *in = buf(N), *out = buf(N);
+    for (int i = 0; i < N; i++) {
+        double t = (double)i / FS;
+        float x = 0.03f * (float)sin(2 * M_PI * 20 * t) + 0.01f * (float)sin(2 * M_PI * 1000 * t);   /* -30 / -40 dBFS */
+        in[2 * i] = in[2 * i + 1] = x;
+    }
+    run(in, NULL, out, N);
+    /* reference: the ideal filter: double-precision RBJ design, double DF-I arithmetic */
+    struct { double b0, b1, b2, a1, a2; } c[5];
+    for (int k = 0; k < 5; k++) {
+        const double f0 = params_get((param_id_t)(P_EQ_B1_FREQ + 4 * k)), gdb = params_get((param_id_t)(P_EQ_B1_GAIN + 4 * k));
+        const double q = params_get((param_id_t)(P_EQ_B1_Q + 4 * k));
+        const double A = pow(10, gdb / 40), w0 = 2 * M_PI * f0 / FS, cw = cos(w0), sw = sin(w0), al = sw / (2 * q), sa = 2 * sqrt(A) * al;
+        double b0, b1, b2, a0, a1, a2;
+        if (eq_band_type(k) == RBJ_PEAK) { b0 = 1 + al * A; b1 = -2 * cw; b2 = 1 - al * A; a0 = 1 + al / A; a1 = -2 * cw; a2 = 1 - al / A; }
+        else if (eq_band_type(k) == RBJ_LOWSHELF) { b0 = A * ((A + 1) - (A - 1) * cw + sa); b1 = 2 * A * ((A - 1) - (A + 1) * cw); b2 = A * ((A + 1) - (A - 1) * cw - sa);
+            a0 = (A + 1) + (A - 1) * cw + sa; a1 = -2 * ((A - 1) + (A + 1) * cw); a2 = (A + 1) + (A - 1) * cw - sa; }
+        else { b0 = A * ((A + 1) + (A - 1) * cw + sa); b1 = -2 * A * ((A - 1) + (A + 1) * cw); b2 = A * ((A + 1) + (A - 1) * cw - sa);
+            a0 = (A + 1) - (A - 1) * cw + sa; a1 = 2 * ((A - 1) - (A + 1) * cw); a2 = (A + 1) - (A - 1) * cw - sa; }
+        c[k].b0 = b0 / a0; c[k].b1 = b1 / a0; c[k].b2 = b2 / a0; c[k].a1 = a1 / a0; c[k].a2 = a2 / a0;
+    }
+    double *ref = xalloc(sizeof(double) * (size_t)N);
+    for (int i = 0; i < N; i++) ref[i] = in[2 * i];
+    for (int k = 0; k < 5; k++) {
+        double x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+        for (int i = 0; i < N; i++) {
+            double x = ref[i], y = c[k].b0 * x + c[k].b1 * x1 + c[k].b2 * x2 - c[k].a1 * y1 - c[k].a2 * y2;
+            x2 = x1; x1 = x; y2 = y1; y1 = y; ref[i] = y;
+        }
+    }
+    /* align (engine latency) and compare over the last 3 s */
+    int lat = 49;
+    double best = 1e9; int best_lat = lat;
+    for (int d = 40; d <= 60; d++) {
+        double e = 0;
+        for (int i = 3 * FS; i < N - 64; i++) { double v = out[2 * (i + d)] - ref[i]; e += v * v; }
+        if (e < best) { best = e; best_lat = d; }
+    }
+    double e2 = 0, sig = 0;
+    int n = 0;
+    for (int i = 3 * FS; i < N - 64; i++) { double v = out[2 * (i + best_lat)] - ref[i]; e2 += v * v; sig += ref[i] * ref[i]; n++; }
+    double noise_dbfs = 10 * log10(e2 / n + 1e-30), sig_dbfs = 10 * log10(sig / n);
+    /* the 24-bit output quantisation alone (TPDF dither) sits at -144.5 dBFS rms */
+    /* audibility: the residual must sit >= 90 dB below the signal (24-bit dither alone is -144.5 dBFS) */
+    RESULT(noise_dbfs <= sig_dbfs - 90.0, "EQ LF precision (20 Hz shelf +18, 30 Hz Q10 +18, 60 Hz Q8 -18): engine vs ideal double filter = %.1f dBFS rms, "
+           "%.1f dB below the %.1f dBFS signal (TDF-II float biquads measured -79.1 dBFS here; limit 90 dB below)", noise_dbfs, sig_dbfs - noise_dbfs, sig_dbfs);
+    free(ref);
+    return 0;
+}
+
+/* ------------------------------------------------------------------------------------------------ */
+/* Loudness: ISO 226 table self-check, and the engine's 50 Hz / 1 kHz gain vs the formula at -40 dB volume. */
+static double iso226_ref(double f_target, double phon)
+{
+    /* independent double-precision ISO 226:2003 at the table frequency nearest f_target */
+    static const double F[] = { 20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000, 12500 };
+    static const double AF[] = { 0.532, 0.506, 0.480, 0.455, 0.432, 0.409, 0.387, 0.367, 0.349, 0.330, 0.315, 0.301, 0.288, 0.276, 0.267, 0.259, 0.253, 0.250, 0.246, 0.244, 0.243, 0.243, 0.243, 0.242, 0.242, 0.245, 0.254, 0.271, 0.301 };
+    static const double LU[] = { -31.6, -27.2, -23.0, -19.1, -16.1, -13.4, -10.9, -8.6, -6.6, -4.8, -3.4, -2.2, -1.2, -0.4, 0.0, 0.3, 0.5, 0.0, -2.7, -4.1, -1.0, 1.7, 2.5, 1.2, -2.1, -7.1, -11.2, -10.7, -3.1 };
+    static const double TF[] = { 78.5, 68.7, 59.5, 51.1, 44.0, 37.5, 31.5, 26.5, 22.1, 17.9, 14.4, 11.4, 8.6, 6.2, 4.4, 3.0, 2.2, 2.4, 3.5, 1.7, -1.3, -4.2, -6.0, -5.4, -1.5, 6.0, 12.6, 13.9, 12.3 };
+    int i = 0;
+    for (int k = 1; k < 29; k++) if (fabs(F[k] - f_target) < fabs(F[i] - f_target)) i = k;
+    double Af = 4.47e-3 * (pow(10, 0.025 * phon) - 1.15) + pow(0.4 * pow(10, (TF[i] + LU[i]) / 10 - 9), AF[i]);
+    return 10 / AF[i] * log10(Af) - LU[i] + 94;
+}
+
+static int test_loud(void)
+{
+    /* table self-check: at 1 kHz Lp == phon; 100 Hz at 40 phon is the well-known ~52 dB SPL */
+    double e1k = 0;
+    for (int ph = 20; ph <= 90; ph += 10) e1k = fmax(e1k, fabs(loud_iso226_spl(1000, (float)ph) - ph));
+    double l100 = loud_iso226_spl(100, 40);
+    /* ISO 226:2003 puts the 40-phon contour at 100 Hz near 64 dB SPL (threshold 26.5) */
+    RESULT(e1k < 0.05 && l100 > 60.0 && l100 < 68.0, "ISO 226 table: |Lp(1 kHz) - phon| max %.3f dB; Lp(100 Hz, 40 phon) = %.1f dB SPL (ISO 226:2003 ~64)", e1k, l100);
+
+    base_params(false);
+    params_set(P_LOUD_ON, 1, SRC_INIT); params_set(P_LOUD_REF, 83, SRC_INIT); params_set(P_LOUD_AMT, 100, SRC_INIT);
+    params_set(P_VOLUME, -40, SRC_INIT);
+    engine_start();
+    const int N = 1 << 16;
+    float *in = buf(N), *out = buf(N);
+    in[0] = in[1] = 0.25f;
+    run(in, NULL, out, N);
+    const double vol = pow(10, -40.0 / 20);
+    double g50 = ir_mag_db(out, 2, N, 50) - 20 * log10(0.25 * vol), g1k = ir_mag_db(out, 2, N, 1000) - 20 * log10(0.25 * vol);
+    double g10k = ir_mag_db(out, 2, N, 10000) - 20 * log10(0.25 * vol);
+    const double exp50 = iso226_ref(50, 43) - iso226_ref(50, 83) + 40, exp10k = iso226_ref(10000, 43) - iso226_ref(10000, 83) + 40;
+    RESULT(fabs(g50 - exp50) < 1.0 && fabs(g1k) < 0.3 && fabs(g10k - exp10k) < 1.5,
+           "loudness @ volume -40 dB (83 -> 43 phon): gain 50 Hz %+.1f dB (ISO 226: %+.1f), 1 kHz %+.2f dB, 10 kHz %+.1f dB (ISO 226: %+.1f)",
+           g50, exp50, g1k, g10k, exp10k);
+    return 0;
+}
+
+/* ------------------------------------------------------------------------------------------------ */
+/* Crossfeed: mono passes bit-exactly; L-only input crosses into R at -FEED dB at LF and far less at 10 kHz. */
+static int test_xfeed(float mode)
+{
+    base_params(false);
+    params_set(P_XF_ON, 1, SRC_INIT); params_set(P_XF_FEED, 4.5f, SRC_INIT); params_set(P_XF_FC, 700, SRC_INIT);
+    engine_start();
+    const int N = 1 << 16;
+    float *in = buf(N), *out = buf(N);
+    if (mode == 0) {
+        /* unit level: the crossfeed block itself leaves a mono signal bit-identical (y == 0 exactly) */
+        dsp_xfeed_t x;
+        xf_init(&x); xf_set(&x, true, 4.5f, 700.f); xf_settle(&x);
+        dsp_blk_t b;
+        dsp_blk_make(&b, 32, 6.f, 30.f, 50.f);
+        long mism = 0;
+        for (int f = 0; f < N; f += 32) {
+            float L[32], R[32], ref[32];
+            for (int i = 0; i < 32; i++) { L[i] = R[i] = ref[i] = 0.3f * frand(); }
+            xf_process(&x, L, R, &b);
+            for (int i = 0; i < 32; i++) mism += (L[i] != ref[i]) + (R[i] != ref[i]);
+        }
+        /* engine level: only the 24-bit TPDF dither remains (the bit-perfect fast path is off while crossfeed runs) */
+        for (int i = 0; i < N; i++) in[2 * i] = in[2 * i + 1] = 0.3f * frand();
+        run(in, NULL, out, N);
+        int lat = -1;
+        double worst = 1e9;
+        for (int d = 40; d <= 60; d++) {
+            double m = 0;
+            for (int i = FS / 2; i < N - 200; i++) m = fmax(m, fabs(out[2 * (i + d)] - in[2 * i]));
+            if (m < worst) { worst = m; lat = d; }
+        }
+        const double lsb = 1.0 / 8388608.0;
+        RESULT(mism == 0 && worst <= 2.0 * lsb, "crossfeed with mono input: block output bit-identical (%ld mismatches); engine output within %.2f LSB (dither only, latency %d)",
+               mism, worst / lsb, lat);
+    } else {
+        for (int i = 0; i < N; i++) { in[2 * i] = 0.3f * (float)sin(2 * M_PI * 100.0 * i / FS) + 0.3f * (float)sin(2 * M_PI * 10000.0 * i / FS); in[2 * i + 1] = 0; }
+        run(in, NULL, out, N);
+        const int W = 1 << 14;
+        double l100 = tone_level(out + 2 * (N - W), 2, W, 100), r100 = tone_level(out + 2 * (N - W) + 1, 2, W, 100);
+        double l10k = tone_level(out + 2 * (N - W), 2, W, 10000), r10k = tone_level(out + 2 * (N - W) + 1, 2, W, 10000);
+        double x100 = 20 * log10(r100 / l100), x10k = 20 * log10(r10k / l10k + 1e-12);
+        RESULT(fabs(x100 + 4.5) < 1.0 && x10k < -18.0, "crossfeed L-only input, feed 4.5 dB, fc 700 Hz: cross level 100 Hz %.1f dB (expect -4.5), 10 kHz %.1f dB", x100, x10k);
+    }
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 3) { fprintf(stderr, "usage: dsp_tests <test> <outdir> [arg]\n"); return 2; }
     g_out = argv[2];
     const char *t = argv[1];
     if (params_selftest() != 0) { RESULT(0, "params table selftest"); return 1; }
-    if (!strncmp(t, "eq", 2)) test_eq(atoi(t + 2));
+    if (!strcmp(t, "eqlf")) test_eq_lf();
+    else if (!strncmp(t, "eq", 2)) test_eq(atoi(t + 2));
     else if (!strcmp(t, "limiter")) test_limiter();
     else if (!strcmp(t, "limtransp_off")) test_lim_transparent("off");
     else if (!strcmp(t, "limtransp_on")) test_lim_transparent("on");
@@ -653,6 +806,9 @@ int main(int argc, char **argv)
     else if (!strncmp(t, "satalias", 8) && argc > 5) test_sat_alias(atof(argv[3]), (float)atof(argv[4]), (float)atof(argv[5]));
     else if (!strcmp(t, "click1") && argc > 3) test_click1(atoi(argv[3]));
     else if (!strcmp(t, "clickpresets")) test_click_presets();
+    else if (!strcmp(t, "loud")) test_loud();
+    else if (!strcmp(t, "xfmono")) test_xfeed(0);
+    else if (!strcmp(t, "xfstereo")) test_xfeed(1);
     else if (!strcmp(t, "dither")) test_dither(0);
     else if (!strcmp(t, "bitperfect")) test_dither(1);
     else if (!strcmp(t, "bench")) test_bench();

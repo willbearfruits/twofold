@@ -1,7 +1,7 @@
 # dsp: the TWOFOLD audio engine (portable C11, float32). Built for the ESP32-S3 here and for Linux by
 # host/dsp_tests (which compiles the same sources without ESP_PLATFORM).
 idf_component_register(SRCS "dsp_engine.c" "rbj.c" "smooth.c" "biquad.c" "eq.c" "halfband.c" "sat.c"
-                            "chorus.c" "delay.c" "reverb.c" "comp.c" "limiter.c" "dither.c"
+                            "chorus.c" "delay.c" "reverb.c" "comp.c" "limiter.c" "dither.c" "loud.c" "xfeed.c" "svf.c"
                        INCLUDE_DIRS "include"
                        REQUIRES params esp_hw_support
                        LDFRAGMENTS "linker.lf")

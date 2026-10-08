@@ -21,6 +21,8 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"
+#include "esp_heap_caps.h"
 
 static const char *TAG = "input";
 
@@ -122,7 +124,7 @@ esp_err_t input_init(void)
     gpio_input_enable(BOARD_PIN_ENC_A);
     gpio_input_enable(BOARD_PIN_ENC_B);
 
-    if (xTaskCreatePinnedToCore(input_task, "input", INPUT_TASK_STACK, NULL, INPUT_TASK_PRIO, NULL, INPUT_TASK_CORE) != pdPASS)
+    if (xTaskCreatePinnedToCoreWithCaps(input_task, "input", INPUT_TASK_STACK, NULL, INPUT_TASK_PRIO, NULL, INPUT_TASK_CORE, (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)) != pdPASS)
         return ESP_ERR_NO_MEM;
     return ESP_OK;
 }

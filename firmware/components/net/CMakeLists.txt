@@ -2,11 +2,11 @@
 idf_build_get_property(python PYTHON)
 
 idf_component_register(
-    SRCS "net_wifi.c" "net_http.c" "net_api.c" "net_ws.c" "net_ota.c" "net_dns.c" "net_json.c"
+    SRCS "net_wifi.c" "net_http.c" "net_api.c" "net_ws.c" "net_ota.c" "net_dns.c" "net_json.c" "net_usb.c"
     INCLUDE_DIRS "include"
     PRIV_INCLUDE_DIRS "."
     REQUIRES ui                     # net.h uses wifi_state_t / sys_status_t from ui_sys.h
-    PRIV_REQUIRES bootdiag esp_wifi esp_netif esp_event esp_http_server esp_timer esp_app_format app_update
+    PRIV_REQUIRES bootdiag espressif__tinyusb usbdev esp_wifi esp_netif esp_event esp_http_server esp_timer esp_app_format app_update
                   esp_partition lwip json params dsp storage)
 
 # The web app is a single hand-written file (web/index.html). It is gzipped at build time

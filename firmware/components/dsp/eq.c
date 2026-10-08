@@ -3,10 +3,31 @@
 #include "dsp_port.h"
 
 #define EQ_SKIP_STATE 1e-9f
+/* The biquad loses precision as its poles approach the unit circle: pole distance ~ pi f / (Q fs). Measured
+ * (host eqlf): float TDF-II at 20-60 Hz / Q 8-10 sits 55 dB under the signal; the SVF 95 dB. Use the SVF for
+ * low bands and for narrow mid bands (f/Q < 100 Hz), the ~3x cheaper biquad elsewhere. */
+#define EQ_SVF_MAX_HZ   500.f
+#define EQ_SVF_MAX_FQ   100.f
 
 void eq_reset(dsp_eq_t *eq)
 {
-    for (int b = 0; b < EQ_BANDS; b++) bq_reset(&eq->bq[b]);
+    for (int b = 0; b < EQ_BANDS; b++) { bq_reset(&eq->bq[b]); svf_reset(&eq->svf[b]); }
+}
+
+/* exact (settled) coefficients for the band's topology */
+static void design_exact(dsp_eq_t *eq, int b)
+{
+    if (eq->topo[b]) svf_design(&eq->svf[b].c, eq_band_type(b), (float)DSP_FS, eq->tf[b], eq->gdb[b].cur, eq->tq[b]);
+    else rbj_design(&eq->bq[b].c, eq_band_type(b), (float)DSP_FS, eq->tf[b], eq->gdb[b].cur, eq->tq[b]);
+}
+
+static void activate(dsp_eq_t *eq, int b)
+{
+    /* becoming active: pick the topology for the target frequency, start from the identity (== 0 dB), zero states */
+    eq->topo[b] = (eq->tf[b] < EQ_SVF_MAX_HZ || eq->tf[b] / eq->tq[b] < EQ_SVF_MAX_FQ) ? 1 : 0;
+    bq_identity(&eq->bq[b].c); bq_reset(&eq->bq[b]);
+    svf_identity(&eq->svf[b].c); svf_reset(&eq->svf[b]);
+    eq->active[b] = 1;
 }
 
 void eq_init(dsp_eq_t *eq)
@@ -19,6 +40,8 @@ void eq_init(dsp_eq_t *eq)
         eq->tf[b] = f_def[b];
         eq->tq[b] = 1.f;
         bq_identity(&eq->bq[b].c);
+        svf_identity(&eq->svf[b].c);
+        eq->topo[b] = 0;
         eq->exact[b] = 1;
         eq->active[b] = 0;
     }
@@ -48,8 +71,8 @@ void eq_settle(dsp_eq_t *eq)
         sm_jump(&eq->gdb[b], eq->gdb[b].tgt);
         sm_jump(&eq->lq[b], eq->lq[b].tgt);
         if (eq->gdb[b].cur != 0.f) {
-            rbj_design(&eq->bq[b].c, eq_band_type(b), (float)DSP_FS, eq->tf[b], eq->gdb[b].cur, eq->tq[b]);
-            eq->active[b] = 1;
+            if (!eq->active[b]) activate(eq, b);
+            design_exact(eq, b);
         }
         eq->exact[b] = 1;
     }
@@ -78,58 +101,75 @@ static DSP_HOT void apply_gain(dsp_sm_t *s, float *L, float *R, const dsp_blk_t 
     }
 }
 
+static inline void band_run(dsp_eq_t *eq, int b, float *L, float *R, int n)
+{
+    if (eq->topo[b]) svf_process2(&eq->svf[b], L, R, n); else bq_process2(&eq->bq[b], L, R, n);
+}
+
+static inline float band_flush(dsp_eq_t *eq, int b)
+{
+    return eq->topo[b] ? svf_flush(&eq->svf[b]) : bq_flush(&eq->bq[b]);
+}
+
+/* design for (f, g, q) with the fast designers and ramp the band's coefficients to it across the block */
+static inline void band_ramp_to(dsp_eq_t *eq, int b, float f, float g, float q, bool exact, float *L, float *R, int n)
+{
+    if (eq->topo[b]) {
+        svf_coef_t c;
+        if (exact) svf_design(&c, eq_band_type(b), (float)DSP_FS, f, g, q);
+        else svf_design_fast(&c, eq_band_type(b), (float)DSP_FS, f, g, q);
+        svf_process2_ramp(&eq->svf[b], &c, L, R, n);
+    } else {
+        biquad_coef_t c;
+        if (exact) rbj_design(&c, eq_band_type(b), (float)DSP_FS, f, g, q);
+        else bq_design_fast(&c, eq_band_type(b), (float)DSP_FS, f, g, q);
+        bq_process2_ramp(&eq->bq[b], &c, L, R, n);
+    }
+}
+
 DSP_HOT void eq_process(dsp_eq_t *eq, float *L, float *R, const dsp_blk_t *b)
 {
     apply_gain(&eq->in_db, L, R, b);
     bool exact_done = false;
     for (int k = 0; k < EQ_BANDS; k++) {
         const int band = (eq->rr + k) % EQ_BANDS;  /* fair round-robin for the exact redesign slot */
-        dsp_bq_t *q = &eq->bq[band];
         if (sm_settled(&eq->gdb[band]) && eq->gdb[band].cur == 0.f) {
             /* 0 dB is an identity filter for every shape: skip once the states have rung out
              * (frequency / Q keep gliding so a later gain move starts from the right place) */
             sm_step(&eq->lf[band], b->k);
             sm_step(&eq->lq[band], b->k);
             if (eq->active[band]) {
-                if (bq_flush(q) < EQ_SKIP_STATE) { bq_reset(q); bq_identity(&q->c); eq->active[band] = 0; }
-                else bq_process2(q, L, R, b->n);
+                if (band_flush(eq, band) < EQ_SKIP_STATE) { eq->active[band] = 0; }
+                else band_run(eq, band, L, R, b->n);
             }
             eq->exact[band] = 1;
             continue;
         }
         const bool moving = !sm_settled(&eq->lf[band]) || !sm_settled(&eq->gdb[band]) || !sm_settled(&eq->lq[band]);
-        if (!eq->active[band]) {
-            /* becoming active: start from the identity (== current filter at 0 dB), states are zero */
-            bq_identity(&q->c);
-            eq->active[band] = 1;
-        }
+        if (!eq->active[band]) activate(eq, band);
         if (moving) {
             sm_step(&eq->lf[band], b->k);
             sm_step(&eq->gdb[band], b->k);
             sm_step(&eq->lq[band], b->k);
-            biquad_coef_t c;
-            if (sm_settled(&eq->lf[band]) && sm_settled(&eq->gdb[band]) && sm_settled(&eq->lq[band]) && !exact_done) {
-                rbj_design(&c, eq_band_type(band), (float)DSP_FS, eq->tf[band], eq->gdb[band].cur, eq->tq[band]);
+            const bool settled = sm_settled(&eq->lf[band]) && sm_settled(&eq->gdb[band]) && sm_settled(&eq->lq[band]);
+            if (settled && !exact_done) {
+                band_ramp_to(eq, band, eq->tf[band], eq->gdb[band].cur, eq->tq[band], true, L, R, b->n);
                 eq->exact[band] = 1;
                 exact_done = true;
                 eq->rr = band + 1;
             } else {
-                bq_design_fast(&c, eq_band_type(band), (float)DSP_FS, dsp_exp2(eq->lf[band].cur),
-                               eq->gdb[band].cur, dsp_exp2(eq->lq[band].cur));
+                band_ramp_to(eq, band, dsp_exp2(eq->lf[band].cur), eq->gdb[band].cur, dsp_exp2(eq->lq[band].cur), false, L, R, b->n);
                 eq->exact[band] = 0;
             }
-            bq_process2_ramp(q, &c, L, R, b->n);
         } else if (!eq->exact[band] && !exact_done) {
-            biquad_coef_t c;
-            rbj_design(&c, eq_band_type(band), (float)DSP_FS, eq->tf[band], eq->gdb[band].cur, eq->tq[band]);
+            band_ramp_to(eq, band, eq->tf[band], eq->gdb[band].cur, eq->tq[band], true, L, R, b->n);
             eq->exact[band] = 1;
             exact_done = true;
             eq->rr = band + 1;
-            bq_process2_ramp(q, &c, L, R, b->n);
         } else {
-            bq_process2(q, L, R, b->n);
+            band_run(eq, band, L, R, b->n);
         }
-        bq_flush(q);
+        band_flush(eq, band);
     }
     if (eq->rr >= EQ_BANDS) eq->rr = 0;
     apply_gain(&eq->out_db, L, R, b);

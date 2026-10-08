@@ -75,6 +75,8 @@ typedef struct {
     uint32_t window_ms;
 } dsp_prof_t;
 void dsp_engine_get_prof(dsp_prof_t *p);
+/* Test hook: the EQ's live coefficients for band 0..4. */
+struct biquad_coef; void dsp_engine_dbg_eq_coefs(int band, float out[5]);
 /* Debug sub-stage cycle sums (DSP_DBG_N words, last = frames), reset on read. */
 void dsp_engine_get_dbg(uint32_t *out);
 

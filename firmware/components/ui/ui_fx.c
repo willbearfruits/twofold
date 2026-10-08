@@ -7,6 +7,8 @@
  *   REVERB    pre-delay gap (zoomed) + decay envelope; damping shades the tail, MOD ripples it
  *   COMPRESS  static curve (threshold / knee / ratio / makeup), live GR bar and GR history
  */
+#include "dsp_loud.h"
+#include "dsp_xfeed.h"
 #include "ui_priv.h"
 
 void ui_mark_anim(void);
@@ -341,6 +343,55 @@ static void comp_hist_tick(float dt)
     ui_mark_anim();
 }
 
+/* ------------------------------------------------------------------ LOUDNESS: compensation curve for the current volume */
+static void viz_loud(gfx_t *g, int x, int y, int w, int h, bool on)
+{
+    (void)on;
+    const float ref = params_get(P_LOUD_REF), amt = params_get(P_LOUD_AMT), vol = params_get(P_VOLUME);
+    const int x0 = x + 2, x1 = x + w - 3, base = y + h - 2, top = y + 8;
+    /* 0 dB line and +6 / +12 ticks */
+    gfx_hline_pat(g, x0, base, x1 - x0, 0x55, C_ON);
+    for (int px = x0; px <= x1; px += 24) gfx_vline_pat(g, px, top, base - top, 0x11, C_ON);
+    int py = -1;
+    for (int px = x0; px <= x1; px++) {
+        const float f = 20.f * powf(1000.f, (float)(px - x0) / (float)(x1 - x0));
+        const float gdb = loud_gain_db(f, ref, amt, vol);
+        int yy = base - iroundf(gdb * (float)(base - top) / 24.f);
+        yy = clampi_(yy, top, base);
+        if (py >= 0) gfx_line(g, px - 1, py, px, yy, C_ON);
+        py = yy;
+    }
+    char b[16];
+    snprintf(b, sizeof b, "%+.1fDB", (double)loud_gain_db(50.f, ref, amt, vol));
+    gfx_text(g, F_TINY, x0, y + 1, b, C_ON);
+    snprintf(b, sizeof b, "%.0f PHON", (double)(ref + (vol < 0.f ? vol : 0.f)));
+    gfx_text_align(g, F_TINY, x1, y + 1, b, 0, GFX_RIGHT, C_ON);
+}
+
+/* ------------------------------------------------------------------ CROSSFEED: direct vs cross level over frequency */
+static void viz_xf(gfx_t *g, int x, int y, int w, int h, bool on)
+{
+    (void)on;
+    const float feed = params_get(P_XF_FEED), fc = params_get(P_XF_FC);
+    const int x0 = x + 2, x1 = x + w - 3, base = y + h - 2, top = y + 8;
+    gfx_hline_pat(g, x0, top + 2, x1 - x0, 0x55, C_ON);                  /* direct path: ~0 dB */
+    int py = -1;
+    for (int px = x0; px <= x1; px++) {
+        const float f = 20.f * powf(1000.f, (float)(px - x0) / (float)(x1 - x0));
+        const float c = xf_cross_db(feed, fc, f);                          /* 0 .. -40 dB */
+        int yy = top + 2 + iroundf(-c * (float)(base - top - 2) / 40.f);
+        yy = clampi_(yy, top, base);
+        if (py >= 0) gfx_line(g, px - 1, py, px, yy, C_ON);
+        py = yy;
+    }
+    const int fx = x0 + iroundf(logf(fc / 20.f) / logf(1000.f) * (float)(x1 - x0));
+    gfx_vline_pat(g, fx, top, base - top, 0x55, C_ON);
+    char b[16];
+    snprintf(b, sizeof b, "L+R %.1fDB", (double)-feed);
+    gfx_text(g, F_TINY, x0, y + 1, b, C_ON);
+    gfx_text_align(g, F_TINY, x1, y + 1, "ITD 220US", 0, GFX_RIGHT, C_ON);
+}
+
 /* ------------------------------------------------------------------ definitions */
 static const int16_t k_gain_ids[] = { P_IN_GAIN, P_IN_MODE, P_MON_MIX, P_MON_PATH };
 static const char *const k_gain_lab[] = { "GAIN", "INPUT", "MONITOR", "PATH" };
@@ -349,21 +400,25 @@ static const int16_t k_cho_ids[] = { P_CHO_ON, P_CHO_MODE, P_CHO_RATE, P_CHO_DEP
 static const int16_t k_dly_ids[] = { P_DLY_ON, P_DLY_SYNC, P_DLY_TIME, P_DLY_FB, P_DLY_MODE, P_DLY_HICUT, P_DLY_LOCUT, P_DLY_MIX };
 static const int16_t k_rev_ids[] = { P_REV_ON, P_REV_DECAY, P_REV_PREDLY, P_REV_DAMP, P_REV_MOD, P_REV_LOCUT, P_REV_WIDTH, P_REV_MIX };
 static const int16_t k_cmp_ids[] = { P_CMP_ON, P_CMP_THRESH, P_CMP_RATIO, P_CMP_ATTACK, P_CMP_RELEASE, P_CMP_KNEE, P_CMP_MAKEUP, P_CMP_MIX };
+static const int16_t k_loud_ids[] = { P_LOUD_ON, P_LOUD_REF, P_LOUD_AMT };
+static const int16_t k_xf_ids[] = { P_XF_ON, P_XF_FEED, P_XF_FC };
 static const char *const k_fx_lab0[] = { "EFFECT" };
 
 #define N(a) ((int)(sizeof(a) / sizeof((a)[0])))
-static const panel_def_t k_panels[6] = {
+static const panel_def_t k_panels[8] = {
     { "GAIN", -1, k_gain_ids, k_gain_lab, N(k_gain_ids), viz_gain },
     { "SATURATE", P_SAT_ON, k_sat_ids, k_fx_lab0, N(k_sat_ids), viz_sat },
     { "CHORUS", P_CHO_ON, k_cho_ids, k_fx_lab0, N(k_cho_ids), viz_chorus },
     { "DELAY", P_DLY_ON, k_dly_ids, k_fx_lab0, N(k_dly_ids), viz_delay },
     { "REVERB", P_REV_ON, k_rev_ids, k_fx_lab0, N(k_rev_ids), viz_reverb },
     { "COMPRESS", P_CMP_ON, k_cmp_ids, k_fx_lab0, N(k_cmp_ids), viz_comp },
+    { "LOUDNESS", P_LOUD_ON, k_loud_ids, k_fx_lab0, N(k_loud_ids), viz_loud },
+    { "CROSSFEED", P_XF_ON, k_xf_ids, k_fx_lab0, N(k_xf_ids), viz_xf },
 };
 
 /* labels: only the first cell is overridden for effects; build full arrays lazily */
-static const char *s_labels[6][8];
-static strip_t s_strip[6];
+static const char *s_labels[8][8];
+static strip_t s_strip[8];
 
 static void panel_enter(int i)
 {
@@ -431,3 +486,5 @@ PANEL(2, cho)
 PANEL(3, dly)
 PANEL(4, rev)
 PANEL(5, cmp)
+PANEL(6, loud)
+PANEL(7, xf)

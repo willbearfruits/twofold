@@ -24,7 +24,7 @@ extern "C" {
 #define CFG_TUD_MAX_SPEED           OPT_MODE_FULL_SPEED
 #define CFG_TUSB_MEM_SECTION
 #define CFG_TUSB_MEM_ALIGN          __attribute__((aligned(4)))
-#define CFG_TUD_ENDPOINT0_SIZE      64
+#define CFG_TUD_ENDPOINT0_SIZE      32      /* 32: the DWC2 FIFO (256 words) must also hold the vendor endpoint */
 
 /* ---------------- classes ---------------- */
 #define CFG_TUD_AUDIO               1
@@ -32,7 +32,10 @@ extern "C" {
 #define CFG_TUD_CDC                 0
 #define CFG_TUD_MSC                 0
 #define CFG_TUD_HID                 0
-#define CFG_TUD_VENDOR              0
+#define CFG_TUD_VENDOR              1
+#define CFG_TUD_VENDOR_EPSIZE       32
+#define CFG_TUD_VENDOR_RX_BUFSIZE   512
+#define CFG_TUD_VENDOR_TX_BUFSIZE   512
 
 /* ---------------- UAC2 ---------------- */
 /* Shared with the descriptors and the audio task (keep in one place). */

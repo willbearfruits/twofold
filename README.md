@@ -8,9 +8,9 @@ an onboard 32-bit float DSP chain, and a 128×64 OLED with one encoder. Radios a
 | | |
 |---|---|
 | Audio | UAC2 async (explicit feedback), 48 kHz, 24-bit in 4-byte subslots, stereo in + out, driverless on Linux / macOS / Windows 10+ |
-| DSP | 5-band parametric EQ → saturation (4× oversampled) → chorus/ensemble → stereo/ping-pong delay → plate reverb → bus compressor → monitor blend → volume → lookahead safety limiter → TPDF dither |
+| DSP | 5-band parametric EQ (SVF/biquad hybrid) → saturation (2× oversampled) → chorus/ensemble → stereo/ping-pong delay → plate reverb → bus compressor → monitor blend → loudness compensation (ISO 226) → headphone crossfeed → volume → lookahead safety limiter → TPDF dither |
 | Monitoring | zero-USB-latency direct monitor crossfade, dry or through the FX |
-| Control | EC11 encoder (PCNT, accelerated), USB-MIDI CC (mappable), opt-in BLE-MIDI, opt-in WiFi web editor + OTA |
+| Control | EC11 encoder (PCNT, accelerated), USB-MIDI CC (mappable), the web editor over **USB** (WebUSB/WinUSB, no radio) or opt-in WiFi (+ OTA), opt-in BLE-MIDI |
 | Display | custom pixel fonts, live EQ curve from the real biquad coefficients + spectrum, per-effect visualisations, 60 fps tweened motion |
 | Persistence | settings, MIDI map and 8 presets in NVS, written only in audio-safe windows |
 
@@ -110,6 +110,19 @@ enclosure/check.sh             # enclosure collision checks + STL export
 python3 tools/loopback.py --selftest          # measurement-suite self-test (synthetic device)
 ```
 
+## Hands-free flashing, status and crash reports over USB
+`tools/flash.sh` asks the running firmware (USB-MIDI SysEx) to reboot into the ROM download mode, flashes, and starts
+the app again: no BOOT/RST buttons after the first flash. `tools/twofold_status.sh` reads CPU per DSP block, xruns,
+USB FIFO/feedback, heap and stack headroom; `tools/crash_report.sh` reads the last panic (reason + backtrace, kept in
+RTC memory) and symbolises it. The OLED also shows e.g. "CRASH: WIFI START" after an abnormal reset.
+
+## The editor without WiFi
+The web editor talks to the device over its USB vendor interface too: open `firmware/components/net/web/index.html`
+from disk in Chrome/Edge (or any https host) and press **Connect over USB**. Windows installs WinUSB by itself
+(MS OS 2.0 descriptor); on Linux install `tools/99-twofold.rules` once (`sudo cp tools/99-twofold.rules
+/etc/udev/rules.d/ && sudo udevadm control --reload`, replug). `tools/twofold_usb.py get /api/state` does the same
+from a shell. Protocol: [API.md](firmware/components/net/API.md).
+
 ## Using it
 * **Home:** turn = master volume (accelerated), press = menu, double-press = mute, long-press = back (everywhere).
 * **Menu:** EQ · Gain · Effects · Network · Bluetooth · Presets · Settings. The hidden diagnostics screen:
@@ -120,6 +133,9 @@ python3 tools/loopback.py --selftest          # measurement-suite self-test (syn
 * **WiFi** (Network → WiFi on): with no saved network the device starts an access point `TWOFOLD-XXXX`.
   The password is shown on the OLED, and a captive portal opens the setup page. Afterwards it joins your network
   as `twofold.local`. TX power is reduced and modem sleep is enabled in station mode.
+* **Listening features** (Effects → Loudness / Crossfeed, also in the web editor): loudness compensation follows the
+  volume knob with ISO 226:2003 contours (reference level and amount adjustable); headphone crossfeed (BS2B-style,
+  feed level and cutoff, 220 µs ITD) keeps mono bit-exact.
 * **Bluetooth:** BLE-MIDI for remote control only. **There is no Bluetooth audio:** the ESP32-S3 has
   Bluetooth LE only, no Bluetooth Classic, so no A2DP. Audio goes over USB. The menu help text says the same.
 * **MIDI:** every parameter has a stable key and an optional CC. The defaults are in
@@ -151,25 +167,28 @@ Hence Studio Mode, but the hardware matters too:
 
 | test | result |
 |---|---|
-| EQ vs analytic RBJ (3 configs incl. 20 Hz shelves, Q = 10) | max error 0.009 dB (limit 0.05) |
+| EQ vs analytic RBJ (3 configs incl. 20 Hz shelves, Q = 10) | max error 0.025 dB (limit 0.05) |
+| EQ low-frequency precision vs ideal double filter | −119 dBFS residual, 95 dB below the signal (float biquads: −79 dBFS) |
+| loudness (ISO 226) at volume −40 dB | +15.5 dB at 50 Hz (formula +16.2), 0.0 at 1 kHz; 1 kHz contour exact to 0.01 dB |
+| crossfeed | mono bit-identical; L→R −4.9 dB at 100 Hz for 4.5 dB feed, −31 dB at 10 kHz |
 | limiter, +12 dB overs (sine, square, bursts, fs/4) | peak −0.300 dBFS at a −0.30 ceiling; bit-identical to limiter-off below threshold |
 | plate reverb RT60 vs setting (1.0 / 2.2 / 6.0 s) | 0.96 / 2.02 / 5.16 s; L/R tail correlation < 0.02 |
 | delay taps (free 250 ms, sync 1/4 & 1/8D @120 BPM, stereo / ping-pong) | spacing exact to ±1 sample, ping-pong alternation correct |
 | saturation aliasing, drive ≤ 12 dB, 5–9 kHz | worst alias −137 to −143 dBc (naive tanh: −45 to −67 dBc) |
 | TPDF dither | 0.526 LSB rms error, mean 0.0002, L/R corr 0.0015 |
 | bit-perfect paths | DAC at unity/flat chain and record at unity: 0 LSB error |
-| click test, all 78 parameters def→max→min→def, presets, soft mute | worst 3.3 dB (limit 6 dB); presets 0.0 dB |
+| click test, all 84 parameters def→max→min→def, presets, soft mute | worst 3.2 dB (limit 6 dB); presets 0.0 dB |
 
 **CPU (ESP32-S3, 240 MHz), measured on the board** with `tools/twofold_status.sh` (every DSP block is bracketed with
 cycle counters; also on the diagnostics screen):
 
-| | all effects off | **all effects on** | all effects on + WiFi AP |
-|---|---|---|---|
-| average | 13 % | **52.6 %** (budget < 60 %) | 52.6 % |
-| worst block | 17 % | 60.8 % | 60.9 % |
+| | all effects off | **all effects on**, EQ flat | all effects on + 5 EQ bands at ±18 dB | + WiFi AP + BLE |
+|---|---|---|---|---|
+| average | 9 % | **53 %** (budget < 60 %) | 60 % | unchanged (radios run on core 0) |
+| worst block | 12 % | 59 % | 68 % | |
 
-Per block with everything on: reverb 15.6, saturation 13.8, chorus 6.7, delay 6.3, comp 4.0, input 2.3, dither 2.1,
-output + limiter 1.4, EQ 0.5 (% of one core). Radios run on core 0 and do not change the audio core's load.
+Per block with everything on: reverb 15.7, saturation 14.0, EQ 7.5 (5 active bands; 0.5 when flat), chorus 6.7,
+delay 6.1, comp 4.0, input 2.2, dither 2.1, output + loudness + crossfeed + limiter 1.8 (% of one core).
 The first on-device measurement was 130 %. The fixes, each measured on the board, were:
 * ESP-IDF builds with `-fno-builtin-memcpy`, so the `memcpy`-based float punning in the DSP math helpers turned into a
   ROM call per sample. Using `__builtin_memcpy` and `__builtin_fabsf` (`abs.s`) took it from 128 % to 71 %.
@@ -177,6 +196,11 @@ The first on-device measurement was 130 %. The fixes, each measured on the board
 * the half-band filters and chorus taps were restructured so the in-order FPU has independent work;
 * the chorus moved to mid/side lines with one tap per voice;
 * saturation oversampling went from 4× to 2× (see the limitations below).
+
+**EQ precision.** Float biquad coefficients lose precision for low-frequency / high-Q bands (the poles sit at
+a2 ≈ 0.9998). Measured against an ideal double-precision filter (20 Hz shelf +18 dB, 30 Hz Q 10 +18 dB, 60 Hz Q 8 −18 dB):
+float TDF-II biquads −79 dBFS residual (55 dB under the signal); the trapezoidal SVF now used for such bands −119 dBFS
+(95 dB under). Bands with f < 500 Hz or f/Q < 100 Hz get the SVF, the rest the 3× cheaper biquad.
 
 **Memory** (`idf.py size`, WiFi + BLE + httpd linked): image 1.40 MB (31 % of each 1.94 MB OTA slot free);
 static DIRAM 217 KB used / 124 KB left, of which 58 KB is DSP code placed in IRAM. DSP buffers at runtime:
@@ -192,8 +216,11 @@ prints the exact internal/PSRAM split.
 * Saturation runs at 2× oversampling to fit the CPU budget: aliasing stays at −138 to −152 dBc at musical drive (≤ 12 dB),
   but at extreme settings (24 dB drive on a −6 dBFS 9–13 kHz sine) it reaches −19 to −22 dBc. `menuconfig` → TWOFOLD DSP
   offers 4× (−33 to −47 dBc there, about +13 % CPU).
-* WiFi in setup-AP mode uses about 96 KB of internal RAM (124 → 29 KB free), so WiFi and BLE at the same time do not fit
-  yet. It needs internal RAM freed elsewhere (e.g. moving cold DSP code out of IRAM).
+* WiFi (setup AP + web) and BLE together use ~100 KB of internal RAM; both run at once with ~30 KB to spare (task
+  stacks that never touch flash live in PSRAM, WiFi buffers trimmed). Each refuses to start, with a message, instead
+  of crashing if that headroom is gone.
+* The USB vendor interface uses the ESP32-S3's last free IN endpoint, and EP0 had to shrink to 32 bytes to fit the
+  DWC2 FIFO; there is no room for a USB-network (NCM) interface next to UAC2 + MIDI.
 * The reverb's wet signal is band-limited to ~10 kHz (24 kHz tank: an internal-RAM trade-off, see PLAN §14).
 * Flash writes stall both CPUs on the S3, so settings are committed only in audio-safe windows (silence / no stream)
   or under a brief soft-mute for explicit saves. Unplugging within ~3 s of a change, while audio is playing, can lose
@@ -203,8 +230,8 @@ prints the exact internal/PSRAM split.
 * OpenSCAD 2021.01 flags the lid STL as possibly non-manifold (coincident faces); slicers repair it on import.
 
 ## Needs real hardware to confirm
-1. USB enumeration and driverless streaming on Linux (PipeWire/ALSA), macOS and Windows 10/11, and hours-long
-   drift-click-free playback with FIFO_COUNT feedback (`tools/loopback.py --drift`).
+1. Driverless streaming on macOS and Windows 10/11 (Linux verified: 48 kHz/24-bit async in + out, MIDI), and hours-long
+   drift-click-free playback with FIFO_COUNT feedback (`tools/loopback.py --drift`). WebUSB/WinUSB on Windows and macOS.
 3. Actual internal heap at boot, and WiFi + BLE enabled together without running out of internal RAM.
 4. Loopback latency, frequency response, THD+N and noise floor, Studio Mode vs WiFi on (`tools/loopback.py`).
 5. PCM1808 slave mode with the PLL-derived MCLK, and low-jitter mode with the PCM1808 as master.

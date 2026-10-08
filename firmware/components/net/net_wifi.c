@@ -673,6 +673,7 @@ esp_err_t net_init(void)
     if (s_q) return ESP_OK;
     s_lock = xSemaphoreCreateMutexStatic(&s_lock_buf);
     s_q = xQueueCreateStatic(NET_QLEN, sizeof(net_msg_t), s_q_store, &s_q_buf);
+    if (net_usb_start() != ESP_OK) ESP_LOGW(TAG, "USB control channel not started");
     return (s_lock && s_q) ? ESP_OK : ESP_FAIL;
 }
 

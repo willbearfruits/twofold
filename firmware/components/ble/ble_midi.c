@@ -332,6 +332,14 @@ esp_err_t ble_midi_enable(bool on)
     xSemaphoreTake(s_lock, portMAX_DELAY);
     esp_err_t e = ESP_OK;
     if (on && !s_on) {
+        /* the BT controller allocates its buffers from internal RAM and asserts (reboot) when that fails:
+         * measured need ~31 KB; refuse below 40 KB */
+        if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < 40 * 1024) {
+            ESP_LOGE(TAG, "not enough internal RAM for BLE: %u B", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+            s_state = BLE_ERROR;
+            xSemaphoreGive(s_lock);
+            return ESP_ERR_NO_MEM;
+        }
         bootdiag_crumb("BLE START");
         e = start();
         bootdiag_crumb(e == ESP_OK ? "BLE ON" : NULL);

@@ -14,7 +14,8 @@ PARAMS_ENUMS(E_DEF)
              .midi_cc = cc_, .min = min_, .max = max_, .def = def_, .step = step_,                       \
              .enum_names = enums_,                                                  \
              .enum_count = (type_ == PT_ENUM ? (uint8_t)((max_) - (min_) + 1.f) : 0) },
-const param_desc_t g_param_desc[P_COUNT] = { PARAMS_TABLE(X_DESC) };
+/* a const table with pointers would go to .data.rel.ro (DRAM, 3 KB); keep it in flash */
+const param_desc_t g_param_desc[P_COUNT] __attribute__((section(".rodata.g_param_desc"))) = { PARAMS_TABLE(X_DESC) };
 #undef X_DESC
 
 /* Table sanity check (run by host tests): enum ranges match name tables, keys unique, defaults in range. */

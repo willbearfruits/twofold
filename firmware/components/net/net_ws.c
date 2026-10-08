@@ -17,6 +17,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"
+#include "esp_heap_caps.h"
 #include "cJSON.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -196,7 +198,7 @@ esp_err_t net_ws_start(httpd_handle_t hd)
     s_busy = false;
     s_clients = 0;
     s_new_client = false;
-    if (xTaskCreatePinnedToCore(push_task, "net_push", 3584, NULL, 4, &s_task, 0) != pdPASS) {
+    if (xTaskCreatePinnedToCoreWithCaps(push_task, "net_push", 3584, NULL, 4, &s_task, 0, (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)) != pdPASS) {
         s_task = NULL;
         s_run = false;
         ESP_LOGE(TAG, "push task create failed");

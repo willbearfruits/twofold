@@ -338,5 +338,13 @@ therefore enforced by *when* we write:
   * saturation dropped from 4× to 2× oversampling (Kconfig option).
 
   WiFi (AP + web) measured at ~96 KB of internal RAM, so the reverb's long lines stay in PSRAM.
+* (DSPi review) Features taken from WeebLabs' DSPi after comparing: USB-MIDI SysEx service channel (reboot to the ROM
+  bootloader, status, crash report), loudness compensation (ISO 226:2003, follows the volume target), headphone crossfeed
+  (mid/side BS2B form, mono bit-exact), the web API over a USB vendor interface (WebUSB/WinUSB; the S3 has only one IN
+  endpoint left, so no USB networking), and an SVF/biquad hybrid EQ after measuring float-biquad precision at LF.
+* (memory) WiFi + BLE together: ui/input/led/net_dns/net_push stacks moved to PSRAM, spectrum ring to PSRAM,
+  g_param_desc forced into flash rodata (a const table with pointers lands in .data.rel.ro = DRAM), WiFi AMPDU/static
+  buffers trimmed, BLE scan-duplicate cache off, esp_err_to_name table off. Idle internal heap 125 → 130 KB and both
+  radios fit (WiFi AP + web ~73 KB, BLE ~31 KB, 30 KB spare). Both have heap guards (refuse, not crash).
 * (initial) The S3 I2C controller has no DMA. The display uses the IDF interrupt-driven asynchronous I2C master
   on core 0 with a dirty-band flush. This meets "never block audio" (different core, no shared locks) without DMA.

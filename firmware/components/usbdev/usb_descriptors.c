@@ -41,7 +41,7 @@
 #define DWC2_EP_COUNT          7
 #define W(bytes)               (((bytes) + 3) / 4)
 #define DWC2_RX_WORDS          (13 + 1 + (W(TF_USB_EP_AUDIO_SZ) + 1) + 2 * DWC2_EP_COUNT)
-#define DWC2_TX_WORDS          (W(CFG_TUD_ENDPOINT0_SIZE) + W(4) + W(TF_USB_EP_AUDIO_SZ) + W(TF_USB_EP_MIDI_SZ))
+#define DWC2_TX_WORDS          (W(CFG_TUD_ENDPOINT0_SIZE) + W(4) + W(TF_USB_EP_AUDIO_SZ) + W(TF_USB_EP_MIDI_SZ) + W(TF_USB_EP_VENDOR_SZ))
 _Static_assert(DWC2_RX_WORDS + DWC2_TX_WORDS <= DWC2_FIFO_WORDS, "DWC2 FIFO RAM overflow: shrink an endpoint");
 _Static_assert(TF_USB_EP_AUDIO_SZ == 392, "2ch x 4B x 49 frames");
 _Static_assert(TF_USB_FIFO_BYTES >= 4 * TF_USB_EP_AUDIO_SZ, "FIFO_COUNT feedback needs >= 4 packets of FIFO");
@@ -50,7 +50,7 @@ _Static_assert(TF_USB_FIFO_BYTES >= 4 * TF_USB_EP_AUDIO_SZ, "FIFO_COUNT feedback
 static const tusb_desc_device_t s_desc_device = {
     .bLength            = sizeof(tusb_desc_device_t),
     .bDescriptorType    = TUSB_DESC_DEVICE,
-    .bcdUSB             = 0x0200,
+    .bcdUSB             = 0x0210,                  /* 2.1: BOS descriptor (WebUSB + MS OS 2.0) */
     .bDeviceClass       = TUSB_CLASS_MISC,         /* IAD composite */
     .bDeviceSubClass    = MISC_SUBCLASS_COMMON,
     .bDeviceProtocol    = MISC_PROTOCOL_IAD,
@@ -80,7 +80,7 @@ uint8_t const *tud_descriptor_device_cb(void) { return (uint8_t const *)&s_desc_
 #define TF_ISO_ASYNC_DATA ((uint8_t)((uint8_t)TUSB_XFER_ISOCHRONOUS | (uint8_t)TUSB_ISO_EP_ATT_ASYNCHRONOUS | (uint8_t)TUSB_ISO_EP_ATT_DATA))
 
 #define MIDI_IAD_LEN  8
-#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + UAC2_FUNC_LEN + MIDI_IAD_LEN + TUD_MIDI_DESC_LEN)
+#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + UAC2_FUNC_LEN + MIDI_IAD_LEN + TUD_MIDI_DESC_LEN + TUD_VENDOR_DESC_LEN)
 
 static const uint8_t s_desc_config[] = {
     TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x00, 500),
@@ -133,6 +133,9 @@ static const uint8_t s_desc_config[] = {
     MIDI_IAD_LEN, TUSB_DESC_INTERFACE_ASSOCIATION, ITF_NUM_MIDI_CONTROL, 2, TUSB_CLASS_AUDIO, AUDIO_SUBCLASS_CONTROL,
     AUDIO_FUNC_PROTOCOL_CODE_UNDEF, STRID_MIDI,
     TUD_MIDI_DESCRIPTOR(ITF_NUM_MIDI_CONTROL, STRID_MIDI, EPNUM_MIDI_OUT, EPNUM_MIDI_IN, TF_USB_EP_MIDI_SZ),
+
+    /* ======== vendor interface: WebUSB (Chrome) / WinUSB (Windows via MS OS 2.0) ======== */
+    TUD_VENDOR_DESCRIPTOR(ITF_NUM_VENDOR, STRID_VENDOR, EPNUM_VENDOR_OUT, EPNUM_VENDOR_IN, TF_USB_EP_VENDOR_SZ),
 };
 _Static_assert(sizeof(s_desc_config) == CONFIG_TOTAL_LEN, "configuration descriptor length mismatch");
 
@@ -151,6 +154,7 @@ static const char *const s_strings[STRID_COUNT] = {
     [STRID_MIDI]         = "TWOFOLD MIDI",
     [STRID_LINE_OUT]     = "Line Out",
     [STRID_LINE_IN]      = "Line In",
+    [STRID_VENDOR]       = "TWOFOLD Control",
 };
 
 static uint16_t s_str_buf[33];
@@ -180,4 +184,55 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
     }
     s_str_buf[0] = (uint16_t)((TUSB_DESC_STRING << 8) | (2 * n + 2));
     return s_str_buf;
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * BOS: WebUSB platform capability (so Chrome lets a page claim the vendor interface) and the Microsoft OS 2.0
+ * descriptor set (Windows binds WinUSB to the vendor interface automatically: no driver, no Zadig).
+ * ------------------------------------------------------------------------------------------------ */
+enum { VENDOR_REQUEST_WEBUSB = 1, VENDOR_REQUEST_MICROSOFT = 2 };
+#define BOS_TOTAL_LEN     (TUD_BOS_DESC_LEN + TUD_BOS_WEBUSB_DESC_LEN + TUD_BOS_MICROSOFT_OS_DESC_LEN)
+#define MS_OS_20_DESC_LEN 0xB2
+
+static const uint8_t s_desc_bos[] = {
+    TUD_BOS_DESCRIPTOR(BOS_TOTAL_LEN, 2),
+    TUD_BOS_WEBUSB_DESCRIPTOR(VENDOR_REQUEST_WEBUSB, 0),              /* no landing page */
+    TUD_BOS_MS_OS_20_DESCRIPTOR(MS_OS_20_DESC_LEN, VENDOR_REQUEST_MICROSOFT),
+};
+_Static_assert(sizeof(s_desc_bos) == BOS_TOTAL_LEN, "BOS length");
+
+uint8_t const *tud_descriptor_bos_cb(void) { return s_desc_bos; }
+
+static const uint8_t s_desc_ms_os_20[] = {
+    /* set header */
+    U16_TO_U8S_LE(0x000A), U16_TO_U8S_LE(MS_OS_20_SET_HEADER_DESCRIPTOR), U32_TO_U8S_LE(0x06030000), U16_TO_U8S_LE(MS_OS_20_DESC_LEN),
+    /* configuration subset header */
+    U16_TO_U8S_LE(0x0008), U16_TO_U8S_LE(MS_OS_20_SUBSET_HEADER_CONFIGURATION), 0, 0, U16_TO_U8S_LE(MS_OS_20_DESC_LEN - 0x0A),
+    /* function subset header: the vendor interface only */
+    U16_TO_U8S_LE(0x0008), U16_TO_U8S_LE(MS_OS_20_SUBSET_HEADER_FUNCTION), ITF_NUM_VENDOR, 0, U16_TO_U8S_LE(MS_OS_20_DESC_LEN - 0x0A - 0x08),
+    /* compatible ID: WINUSB */
+    U16_TO_U8S_LE(0x0014), U16_TO_U8S_LE(MS_OS_20_FEATURE_COMPATBLE_ID), 'W', 'I', 'N', 'U', 'S', 'B', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    /* registry property: DeviceInterfaceGUIDs (REG_MULTI_SZ) */
+    U16_TO_U8S_LE(0x0084), U16_TO_U8S_LE(MS_OS_20_FEATURE_REG_PROPERTY), U16_TO_U8S_LE(0x0007), U16_TO_U8S_LE(0x002A),
+    'D', 0, 'e', 0, 'v', 0, 'i', 0, 'c', 0, 'e', 0, 'I', 0, 'n', 0, 't', 0, 'e', 0, 'r', 0, 'f', 0, 'a', 0, 'c', 0, 'e', 0,
+    'G', 0, 'U', 0, 'I', 0, 'D', 0, 's', 0, 0, 0,
+    U16_TO_U8S_LE(0x0050),
+    '{', 0, '6', 0, 'B', 0, '0', 0, 'F', 0, '4', 0, '2', 0, 'A', 0, '1', 0, '-', 0, '2', 0, 'C', 0, '7', 0, 'E', 0, '-', 0,
+    '4', 0, 'D', 0, '1', 0, '9', 0, '-', 0, '9', 0, 'A', 0, '0', 0, '5', 0, '-', 0, '7', 0, 'F', 0, '2', 0, '1', 0, 'C', 0,
+    '0', 0, 'B', 0, 'E', 0, '5', 0, '3', 0, 'D', 0, '4', 0, '}', 0, 0, 0, 0, 0,
+};
+_Static_assert(sizeof(s_desc_ms_os_20) == MS_OS_20_DESC_LEN, "MS OS 2.0 descriptor length");
+
+bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const *request)
+{
+    if (stage != CONTROL_STAGE_SETUP) return true;
+    if (request->bmRequestType_bit.type == TUSB_REQ_TYPE_VENDOR) {
+        if (request->bRequest == VENDOR_REQUEST_MICROSOFT && request->wIndex == 7) {
+            uint16_t total;
+            memcpy(&total, s_desc_ms_os_20 + 8, 2);
+            return tud_control_xfer(rhport, request, (void *)(uintptr_t)s_desc_ms_os_20, total);
+        }
+        return false;                                     /* WebUSB GET_URL: no landing page */
+    }
+    return false;
 }

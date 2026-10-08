@@ -63,7 +63,7 @@ static inline int iroundf(float v) { return (int)lrintf(v); }
 /* ---------- screens ---------- */
 typedef enum {
     SCR_BOOT = 0, SCR_HOME, SCR_MENU, SCR_EQ, SCR_GAIN, SCR_FXLIST,
-    SCR_FX_SAT, SCR_FX_CHO, SCR_FX_DLY, SCR_FX_REV, SCR_FX_CMP,
+    SCR_FX_SAT, SCR_FX_CHO, SCR_FX_DLY, SCR_FX_REV, SCR_FX_CMP, SCR_FX_LOUD, SCR_FX_XF,
     SCR_NET, SCR_NET_SETUP, SCR_BT, SCR_PRESETS, SCR_SETTINGS, SCR_ABOUT, SCR_DIAG,
     SCR_SAVER, SCR_COUNT
 } scr_id_t;

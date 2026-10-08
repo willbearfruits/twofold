@@ -1,5 +1,9 @@
 /*
- * dsp_eq.h: 5-band parametric EQ (low shelf, 3 peaks, high shelf), stereo, TDF-II.
+ * dsp_eq.h: 5-band parametric EQ (low shelf, 3 peaks, high shelf), stereo.
+ *
+ * Topology per band, chosen when the band becomes active: the trapezoidal SVF (dsp_svf.h) where a float biquad
+ * loses precision (f < 500 Hz, or narrow: f/Q < 100 Hz), the ~3x cheaper TDF-II biquad elsewhere. A band keeps its topology while
+ * active (no state hand-over mid-sweep); it may switch after passing through 0 dB.
  *
  * - Per band the frequency (log2 Hz), gain (dB) and Q (log2) are smoothed separately. While any of them
  *   moves, coefficients are re-designed every block with the fast float designer and interpolated per sample
@@ -13,10 +17,13 @@
 #pragma once
 #include <stdbool.h>
 #include "dsp_biquad.h"
+#include "dsp_svf.h"
 #include "dsp_smooth.h"
 
 typedef struct {
     dsp_bq_t  bq[EQ_BANDS];
+    dsp_svf_t svf[EQ_BANDS];
+    uint8_t   topo[EQ_BANDS];                              /* 0: TDF-II biquad, 1: SVF (chosen when the band becomes active) */
     dsp_sm_t  lf[EQ_BANDS], gdb[EQ_BANDS], lq[EQ_BANDS];   /* log2(f), dB, log2(Q) */
     float     tf[EQ_BANDS], tq[EQ_BANDS];                  /* natural-unit targets (for rbj_design) */
     uint8_t   exact[EQ_BANDS];                             /* coefficients == rbj_design(targets) */

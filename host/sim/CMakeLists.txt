@@ -28,6 +28,10 @@ add_executable(twofold_sim
   ${FW}/params/params.c
   ${FW}/params/factory_presets.c
   ${FW}/dsp/rbj.c
+  ${FW}/dsp/loud.c
+  ${FW}/dsp/xfeed.c
+  ${FW}/dsp/biquad.c
+  ${FW}/dsp/smooth.c
 )
 target_include_directories(twofold_sim PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}

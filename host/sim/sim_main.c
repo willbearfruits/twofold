@@ -311,8 +311,8 @@ static void catalog(void)
     press(); wait_ms(260);
     seq_stop();
     wait_ms(400); shot("effects");
-    static const char *const names[5] = { "fx_saturate", "fx_chorus", "fx_delay", "fx_reverb", "fx_compress" };
-    for (int i = 0; i < 5; i++) {
+    static const char *const names[7] = { "fx_saturate", "fx_chorus", "fx_delay", "fx_reverb", "fx_compress", "fx_loudness", "fx_crossfeed" };
+    for (int i = 0; i < 7; i++) {
         go(i);
         press(); wait_ms(600);
         char nm[64];
@@ -323,6 +323,7 @@ static void catalog(void)
         if (i == 2) { rot(1, 120); press(); rot(-2, 150); press(); }
         if (i == 3) { rot(1, 120); press(); rot(5, 60); press(); }
         if (i == 4) { rot(1, 120); press(); rot(-12, 50); press(); rot(1, 120); press(); rot(10, 50); press(); }
+        if (i == 5) { params_set(P_VOLUME, -40.f, SRC_UI); wait_ms(300); }   /* volume -40 dB: visible compensation */
         wait_ms(900); shot(names[i]);
         if (i == 0) { rot(1, 120); press(); wait_ms(300); shot("fx_saturate_edit"); press(); }
         if (i == 1) { rot(-1, 120); press(); rot(1, 150); press(); wait_ms(800); shot("fx_chorus_ensemble"); }

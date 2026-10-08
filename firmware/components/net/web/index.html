@@ -242,7 +242,8 @@ const PAGES = [
 const GROUPS = {
  out: ['mix', 'Output'], lim: ['mix', 'Safety limiter'], in: ['mix', 'Input'], mon: ['mix', 'Direct monitor'],
  eq: ['eq', 'EQ'], sat: ['fx', 'Saturate'], cho: ['fx', 'Chorus'], dly: ['fx', 'Delay'], rev: ['fx', 'Plate reverb'],
- cmp: ['fx', 'Compressor'], sys: ['fx', 'Tempo'], ui: ['device', 'Display & LED'], midi: ['midi', 'MIDI'], net: ['device', 'Radios'],
+ cmp: ['fx', 'Compressor'], sys: ['fx', 'Tempo'], loud: ['mix', 'Loudness (ISO 226)'], xf: ['mix', 'Headphone crossfeed'],
+ ui: ['device', 'Display & LED'], midi: ['midi', 'MIDI'], net: ['device', 'Radios'],
 };
 const FX_ORDER = ['sat', 'cho', 'dly', 'rev', 'cmp', 'sys'];
 
@@ -281,6 +282,12 @@ const now = () => performance.now();
 const minus = s => s.replace(/^-/, '−');
 
 async function req(method, path, body) {
+ if (USB.dev) {                       /* serialise: one USB request in flight */
+  const run = () => usbRpc(method, path, body);
+  const p = USB.chain.then(run, run);
+  USB.chain = p.catch(() => {});
+  return p;
+ }
  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 8000);
  try {
   const r = await fetch(path, {method, cache: 'no-store', signal: ctl.signal,
@@ -291,6 +298,46 @@ async function req(method, path, body) {
  } finally { clearTimeout(t); }
 }
 const get = p => req('GET', p), post = (p, b) => req('POST', p, b || {});
+
+/* ---------- WebUSB transport: the same API over the device's vendor interface (no WiFi; Chrome/Edge).
+ * Frames: u32 LE length + "METHOD /path\n" + body  ->  u32 LE length + "STATUS\n" + JSON. One request at a time. */
+const USB = {dev: null, itf: 5, ep: 4, chain: Promise.resolve()};
+const USB_IDS = [{vendorId: 0x303a, productId: 0x4a57}];
+async function usbConnect(dev) {
+ if (!navigator.usb) throw new Error('WebUSB needs Chrome or Edge');
+ dev = dev || await navigator.usb.requestDevice({filters: USB_IDS});
+ await dev.open();
+ if (dev.configuration === null) await dev.selectConfiguration(1);
+ await dev.claimInterface(USB.itf);
+ USB.dev = dev;
+ if (S.ws) { try { S.ws.close(); } catch (e) {} }
+ S.live = false;
+ toast('Connected over USB');
+}
+async function usbRpc(method, path, body) {
+ const d = USB.dev;
+ const payload = new TextEncoder().encode(method + ' ' + path + '\n' + (body ? JSON.stringify(body) : ''));
+ const out = new Uint8Array(4 + payload.length);
+ new DataView(out.buffer).setUint32(0, payload.length, true);
+ out.set(payload, 4);
+ await d.transferOut(USB.ep, out);
+ let got = new Uint8Array(0), len = -1;
+ for (let i = 0; i < 2000 && (len < 0 || got.length < len); i++) {
+  const r = await d.transferIn(USB.ep, 4096);
+  if (r.status !== 'ok') throw new Error('USB ' + r.status);
+  const c = new Uint8Array(r.data.buffer, r.data.byteOffset, r.data.byteLength);
+  const n = new Uint8Array(got.length + c.length); n.set(got); n.set(c, got.length); got = n;
+  if (len < 0 && got.length >= 4) { len = new DataView(got.buffer, got.byteOffset).getUint32(0, true); got = got.slice(4); }
+ }
+ const txt = new TextDecoder().decode(got.slice(0, len));
+ const nl = txt.indexOf('\n'), status = parseInt(txt.slice(0, nl), 10);
+ let j = {}; try { j = JSON.parse(txt.slice(nl + 1) || '{}'); } catch (e) {}
+ if (status >= 400 || j.ok === false) throw new Error(j.error || 'USB ' + status);
+ return j;
+}
+if (navigator.usb) {
+ navigator.usb.addEventListener('disconnect', e => { if (USB.dev && e.device === USB.dev) { USB.dev = null; toast('USB disconnected'); } });
+}
 
 let toastT;
 function toast(msg) {
@@ -1152,6 +1199,7 @@ function startPoll() {
 }
 function stopPoll() { clearInterval(pollM); clearInterval(pollS); pollM = pollS = 0; }
 function wsConnect() {
+ if (USB.dev) { startPoll(); return; }
  if (S.dead) return;
  if (NO_WS || !('WebSocket' in window)) return startPoll();
  let ws;
@@ -1199,7 +1247,12 @@ async function boot() {
    break;
   } catch (e) {
    setLink('off');
-   fullscreen('Connecting to TWOFOLD', 'Waiting for the device…', true);
+   fullscreen('Connecting to TWOFOLD', navigator.usb ? 'Waiting for the device… or connect it over USB (no WiFi needed).' : 'Waiting for the device…', true);
+   if (navigator.usb && !document.querySelector('#usbbtn')) {
+    const fs = document.querySelector('#fullov .dlg') || document.body;
+    fs.append(h('button', {id: 'usbbtn', class: 'btn', text: 'Connect over USB', style: 'margin-top:14px',
+      onclick: async () => { try { await usbConnect(); } catch (e) { toast(e.message); } }}));
+   }
    await new Promise(r => setTimeout(r, Math.min(5000, 1000 + 500 * tries++)));
   }
  }

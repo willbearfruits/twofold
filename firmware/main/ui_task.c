@@ -15,6 +15,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"
+#include "esp_heap_caps.h"
 
 #define FRAME_FAST_MS 16
 #define FRAME_IDLE_MS 33
@@ -59,7 +61,7 @@ static void ui_task(void *arg)
 
 esp_err_t ui_task_start(void)
 {
-    if (xTaskCreatePinnedToCore(ui_task, "ui", TF_UI_STACK, NULL, TF_UI_PRIO, NULL, TF_UI_CORE) != pdPASS)
+    if (xTaskCreatePinnedToCoreWithCaps(ui_task, "ui", TF_UI_STACK, NULL, TF_UI_PRIO, NULL, TF_UI_CORE, (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)) != pdPASS)
         return ESP_ERR_NO_MEM;
     return ESP_OK;
 }

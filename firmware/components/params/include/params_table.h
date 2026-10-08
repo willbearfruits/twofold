@@ -91,6 +91,13 @@
   /* ---------- Safety limiter (setting) ---------- */ \
   X(P_LIM_ON,      "lim.on",      "LIMITER",  "",    PT_BOOL,  PC_LIN,  0.f,   1.f,    1.f,   1.f,  PF_SETTING, NULL, NO_CC) \
   X(P_LIM_CEIL,    "lim.ceiling", "CEILING",  "dB",  PT_FLOAT, PC_LIN, -3.f,   0.f,   -0.3f,  0.1f, PF_SETTING, NULL, NO_CC) \
+  /* ---------- Listening: loudness compensation (ISO 226) and headphone crossfeed (settings) ---------- */ \
+  X(P_LOUD_ON,     "loud.on",     "LOUDNESS", "",    PT_BOOL,  PC_LIN,  0.f,   1.f,    0.f,   1.f,  PF_SETTING, NULL, NO_CC) \
+  X(P_LOUD_REF,    "loud.ref",    "REF",      "dB",  PT_FLOAT, PC_LIN, 60.f, 100.f,   83.f,   1.f,  PF_SETTING, NULL, NO_CC) \
+  X(P_LOUD_AMT,    "loud.amount", "AMOUNT",   "%",   PT_FLOAT, PC_LIN,  0.f, 200.f,  100.f,   5.f,  PF_SETTING, NULL, NO_CC) \
+  X(P_XF_ON,       "xf.on",       "CROSSFEED","",    PT_BOOL,  PC_LIN,  0.f,   1.f,    0.f,   1.f,  PF_SETTING, NULL, NO_CC) \
+  X(P_XF_FEED,     "xf.feed",     "FEED",     "dB",  PT_FLOAT, PC_LIN,  1.f,  15.f,    4.5f,  0.5f, PF_SETTING, NULL, NO_CC) \
+  X(P_XF_FC,       "xf.fc",       "CUTOFF",   "Hz",  PT_FLOAT, PC_LOG, 300.f, 2000.f, 700.f, 12.f,  PF_SETTING, NULL, NO_CC) \
   /* ---------- UI / system settings ---------- */ \
   X(P_UI_BRIGHT,   "ui.bright",   "BRIGHT",   "%",   PT_FLOAT, PC_LIN,  0.f, 100.f,   70.f,   5.f,  PF_SETTING, NULL, NO_CC) \
   X(P_UI_DIM,      "ui.dim",      "DIM AFTER","",    PT_ENUM,  PC_LIN,  0.f,   4.f,    2.f,   1.f,  PF_SETTING, E_UI_DIM, NO_CC) \

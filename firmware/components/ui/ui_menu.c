@@ -86,9 +86,11 @@ static const list_item_t k_fx[] = {
     { LI_SUB, 0, P_DLY_ON, SCR_FX_DLY, "DELAY", v_onoff },
     { LI_SUB, 0, P_REV_ON, SCR_FX_REV, "REVERB", v_onoff },
     { LI_SUB, 0, P_CMP_ON, SCR_FX_CMP, "COMPRESS", v_onoff },
+    { LI_SUB, 0, P_LOUD_ON, SCR_FX_LOUD, "LOUDNESS", v_onoff },
+    { LI_SUB, 0, P_XF_ON, SCR_FX_XF, "CROSSFEED", v_onoff },
 };
 static list_t s_fx;
-static void fx_enter(void) { list_init(&s_fx, k_fx, 5, NULL); }
+static void fx_enter(void) { list_init(&s_fx, k_fx, 7, NULL); }
 static void fx_input(ui_act_t a, int raw)
 {
     /* double press on a row toggles the effect without entering it */

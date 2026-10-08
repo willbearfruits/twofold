@@ -64,6 +64,12 @@ CLICKWORST cmp.makeup 0.00 def->max
 CLICKWORST cmp.mix 0.00 def->max
 CLICKWORST lim.on 0.00 def->max
 CLICKWORST lim.ceiling 0.00 def->max
+CLICKWORST loud.on 0.00 def->max
+CLICKWORST loud.ref 0.00 def->max
+CLICKWORST loud.amount 0.00 def->max
+CLICKWORST xf.on 0.00 def->max
+CLICKWORST xf.feed 0.00 def->max
+CLICKWORST xf.fc 0.00 def->max
 CLICKWORST ui.bright 0.00 def->max
 CLICKWORST ui.dim 0.00 def->max
 CLICKWORST ui.saver 0.00 def->max

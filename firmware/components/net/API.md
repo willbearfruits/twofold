@@ -32,6 +32,16 @@ Captive-portal probes (`/hotspot-detect.html`, `/generate_204`, `/connecttest.tx
 `/canonical.html`, `/success.txt`, …) redirect to the setup page while in AP mode. A built-in DNS server answers
 every query with the AP address.
 
+## Over USB (no WiFi)
+The same API is reachable through the device's vendor interface (interface 5, bulk endpoints 0x04 out / 0x84 in),
+so the editor works in Studio Mode. The web app's **Connect over USB** button uses WebUSB (Chrome/Edge; open
+`firmware/components/net/web/index.html` from disk or any https host); `tools/twofold_usb.py` does the same from a
+shell with libusb. Windows binds WinUSB automatically (MS OS 2.0 descriptor); Linux needs `tools/99-twofold.rules`.
+
+Framing (`net_usb.c`): request = `u32 LE length` + `"METHOD /path[?query]\n"` + body; response = `u32 LE length` +
+`"STATUS\n"` + JSON. One request at a time; responses up to 24 KB. There is no push channel: clients poll
+`/api/meters` (5–10 Hz) and `/api/state` (~1 Hz), as the web app does when WebSocket is unavailable.
+
 ## WebSocket `/ws`
 * client → device: `{"t":"set","k":"eq.b2.gain","v":3.5}` or `{"t":"set","values":{…}}`
 * device → client, ~15 Hz: `{"t":"u","m":{meters…},"p":{changed params…},"s":{status…}}`. Status is sent at 1 Hz

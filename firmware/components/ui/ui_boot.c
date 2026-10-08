@@ -89,14 +89,14 @@ const screen_t g_scr_saver = { NULL, NULL, NULL, saver_draw, NULL };
 
 /* ------------------------------------------------------------------ screen table */
 extern const screen_t g_scr_home, g_scr_menu, g_scr_eq, g_scr_gain, g_scr_fxlist, g_scr_sat, g_scr_cho,
-    g_scr_dly, g_scr_rev, g_scr_cmp, g_scr_net, g_scr_net_setup, g_scr_bt, g_scr_presets, g_scr_settings,
+    g_scr_dly, g_scr_rev, g_scr_cmp, g_scr_loud, g_scr_xf, g_scr_net, g_scr_net_setup, g_scr_bt, g_scr_presets, g_scr_settings,
     g_scr_about, g_scr_diag;
 
 const screen_t *const g_screens[SCR_COUNT] = {
     [SCR_BOOT] = &g_scr_boot, [SCR_HOME] = &g_scr_home, [SCR_MENU] = &g_scr_menu, [SCR_EQ] = &g_scr_eq,
     [SCR_GAIN] = &g_scr_gain, [SCR_FXLIST] = &g_scr_fxlist, [SCR_FX_SAT] = &g_scr_sat,
     [SCR_FX_CHO] = &g_scr_cho, [SCR_FX_DLY] = &g_scr_dly, [SCR_FX_REV] = &g_scr_rev,
-    [SCR_FX_CMP] = &g_scr_cmp, [SCR_NET] = &g_scr_net, [SCR_NET_SETUP] = &g_scr_net_setup,
+    [SCR_FX_CMP] = &g_scr_cmp, [SCR_FX_LOUD] = &g_scr_loud, [SCR_FX_XF] = &g_scr_xf, [SCR_NET] = &g_scr_net, [SCR_NET_SETUP] = &g_scr_net_setup,
     [SCR_BT] = &g_scr_bt, [SCR_PRESETS] = &g_scr_presets, [SCR_SETTINGS] = &g_scr_settings,
     [SCR_ABOUT] = &g_scr_about, [SCR_DIAG] = &g_scr_diag, [SCR_SAVER] = &g_scr_saver,
 };
