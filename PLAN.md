@@ -348,3 +348,78 @@ therefore enforced by *when* we write:
   radios fit (WiFi AP + web ~73 KB, BLE ~31 KB, 30 KB spare). Both have heap guards (refuse, not crash).
 * (initial) The S3 I2C controller has no DMA. The display uses the IDF interrupt-driven asynchronous I2C master
   on core 0 with a dirty-band flush. This meets "never block audio" (different core, no shared locks) without DMA.
+
+## 15. Roadmap (planned variants, not built)
+
+Both variants are build-time options of the same firmware (Kconfig), same PCB wiring plus one DAC module for B. The
+hard limit that shapes both is the USB **Full Speed frame budget**: 1 ms frames, at most ~1350 B of isochronous data per
+frame (90 % of 1500 B, before packet overhead and bit stuffing), 1023 B per packet. UAC2 audio uses it as:
+
+| configuration                    | OUT B/ms | IN B/ms | total | fits FS? |
+|----------------------------------|---------:|--------:|------:|----------|
+| today: 2 in / 2 out, 48 k, 4-byte subslots | 384 | 384 | 768 | yes |
+| A: 2 in / 2 out, 96 k, 4-byte subslots     | 768 | 768 | 1536 | **no** |
+| A: 2 in / 2 out, 96 k, 3-byte subslots     | 576 | 576 | 1152 | yes (tight, ~1220 B with overhead) |
+| B: 2 in / 4 out, 48 k, 4-byte subslots     | 768 | 384 | 1152 | yes |
+| B: 2 in / 4 out, 48 k, 3-byte subslots     | 576 | 288 |  864 | yes |
+| A+B: 2 in / 4 out, 96 k, 3-byte subslots   | 1152 | 576 | 1728 | **no** |
+
+So A and B each fit; A+B does not on one S3 (the S3 has no High Speed USB). No new endpoints are needed for either
+(channels and rate live inside the existing isochronous pipes), which matters because all 5 IN endpoints are in use.
+
+### 15.1 Variant A: 96 kHz (`CONFIG_TWOFOLD_FS_96K`)
+* **Clock: unchanged.** MCLK stays 12.288 MHz (now 128·fs instead of 256·fs), the same 13+1/48 divider from
+  PLL_F160M, so the measured jitter figures of §4 carry over. BCLK = 64·fs = 6.144 MHz, WS = 96 kHz. PCM5102A takes
+  128·fs at 96 k (and the kit board runs it from BCK anyway); PCM1808 in slave mode auto-detects 128·fs at double
+  rate. *Check both datasheet tables on real parts (§"needs hardware").* The external-oscillator low-jitter mode needs
+  no change either (12.288 MHz).
+* **USB: 3-byte subslots** (`bSubslotSize=3, bBitResolution=24`) in both directions, because 4-byte packing does not
+  fit the frame (table above). The pack/unpack between USB packets and the engine's left-justified int32 becomes a
+  byte shuffle on the USB task (≈ 2 cycles per sample, nothing). Feedback value scales with fs (already computed from
+  the measured rate).
+* **Block size 64 frames** (same 667 µs block period and interrupt rate as now; same latency in ms).
+* **DSP budget halves: 2500 cycles per frame.** Today's 48 k figures scaled to 96 k:
+  * EQ (5 bands SVF/biquad), compressor, limiter, loudness, crossfeed, dither: ≈ 24 % → fits.
+  * Saturation: oversampling becomes unnecessary at 96 k (the 2× halfband pair goes, the shaper runs 1×): ≈ 8 %.
+  * Chorus, delay, reverb: **off in this variant.** Their delay lines double in size (chorus lines are internal RAM
+    and already hot), and the reverb tank would need a 4:1 decimator to keep its 24 kHz rate. Possible later, not in
+    the first cut. UI hides the three panels, the params stay in the table (presets remain compatible).
+  * Expected total ≈ 35–40 % of core 1 with everything that is on.
+* **Memory:** USB packet buffers grow (576 B per packet, ×2 for double buffering, internal RAM); I2S DMA ring doubles
+  (+6 KB internal); limiter lookahead and smoother tables double (small). Net ≈ −10 KB internal, within the 30 KB spare
+  with both radios on, but the radio heap guards must be re-checked.
+* **Host tests:** every dsp_test takes `--fs`; run the suite at 96 k; `tools/loopback.py --fs 96000`.
+* Not in scope: 44.1/88.2 (not a clean divider from the S3 PLL, §4.2); sample-rate switching at run time (the device
+  advertises one rate; the OS resamples).
+
+### 15.2 Variant B: 4 outputs (`CONFIG_TWOFOLD_OUT4`)
+* **Hardware:** a second PCM5102A module. It shares BCK and LRCK with the first DAC (same wires) and gets its own
+  data line DOUT2 on a spare GPIO (candidate: GPIO14). XSMT bridged high like the first.
+* **Clocking: one clock domain.** I2S0 keeps full duplex (ADC + DAC1). I2S1 runs **TX only, as a slave** of I2S0's
+  BCLK/WS, which are looped back through the GPIO matrix (the pads are outputs for I2S0 and inputs for I2S1). Both
+  DACs are then sample-locked with zero drift and a known constant phase; no second divider, no resampler. (TDM on one
+  data line is out: the PCM5102A speaks plain I2S only.)
+* **USB:** the OUT AudioStreaming interface advertises 4 channels (`bNrChannels=4`, channel config FL FR + two
+  "undefined"/aux), 48 k, 4-byte subslots (fits: 768 B/ms). IN stays stereo. Linux, macOS and the Windows 10
+  (1703+) class driver all expose a 4-out device; DAWs see outputs 1-2 and 3-4.
+* **Routing (new params, settings group, saved in presets):**
+  * `out34.src`: *USB 3-4* (second stereo bus from the host, own volume + limiter, no effects: a cue/headphone or
+    sub/aux feed), *main dup* (copy of 1-2 after the limiter), *dry monitor* (input blend without effects, for
+    tracking), *wet only* (effects return, for an external mixer).
+  * `out34.volume`, `out34.lim_on`.
+* **DSP cost:** second volume + limiter + dither pair ≈ +6 % of core 1 (limiter is the expensive part; the *main dup*
+  and *wet only* routes cost only the dither). All effects stay on at 48 k: 53 % → ~59 %.
+* **Memory:** I2S1 DMA ring ≈ 3 KB internal, USB OUT packets 768 B ×2. Negligible.
+* **UI:** one extra meter pair on the home screen (narrow bars) and an "OUT 3-4" settings page; the web editor gets
+  the routing selector.
+* **Enclosure:** two more RCA/TRS jacks on the rear; the SCAD rear panel is parametric on the jack list.
+
+### 15.3 Beyond one S3
+* A+B (4 out at 96 k) needs High Speed USB: not this chip. The DSPi-class answer is a different platform, not a variant.
+* Effects at 96 k: a second ESP32-S3 as an I2S co-processor (chorus/delay/reverb on chip 2, I2S round trip ≈ 1.3 ms,
+  parameters mirrored over UART). Bigger project than A and B together; only worth it if A ships and the effects are
+  missed. An ESP32-C3 brings nothing here (no FPU, no USB OTG, no full-duplex I2S).
+* S/PDIF out: a WM8804 or a bit-banged biphase encoder on the second I2S's TX, fed from the same clock domain. Cheap
+  in hardware, moderate in firmware; shares I2S1 with variant B unless the DAC2 goes on a third data line of I2S0
+  (TDM is not available for the PCM5102A, but I2S0 can still drive one stereo line only, so S/PDIF and DAC2 compete
+  for I2S1).

@@ -211,8 +211,8 @@ prints the exact internal/PSRAM split.
 **UI:** render 6 µs/frame average on the host. All screens: [docs/img/ui/contact_sheet.png](docs/img/ui/contact_sheet.png).
 
 ## Known limitations
-* **Not yet run on hardware.** Everything below "needs hardware" is unverified on silicon.
-* 48 kHz only (on the S3 PLL, 44.1 kHz would be equally fractional; OS resamplers handle it).
+* Running on the SuperMini board (USB audio + MIDI, WiFi + BLE together, SysEx service channel verified). The items under "needs hardware" are still unmeasured.
+* 48 kHz only (on the S3 PLL, 44.1 kHz would be equally fractional; OS resamplers handle it). A 96 kHz variant is on the roadmap.
 * Saturation runs at 2× oversampling to fit the CPU budget: aliasing stays at −138 to −152 dBc at musical drive (≤ 12 dB),
   but at extreme settings (24 dB drive on a −6 dBFS 9–13 kHz sine) it reaches −19 to −22 dBc. `menuconfig` → TWOFOLD DSP
   offers 4× (−33 to −47 dBc there, about +13 % CPU).
@@ -238,6 +238,17 @@ prints the exact internal/PSRAM split.
 6. OLED at 1 MHz I2C, SH1106 offset, brightness curve; encoder direction / counts per detent of your EC11.
 7. The storage policy's audio-safe windows under real use, and flash auto-suspend if your flash supports it.
 8. Enclosure fit with your modules (measure first: [checklist](docs/enclosure.md#measurement-checklist-calipers-before-printing)).
+
+## Roadmap
+Planned build-time variants, same board, details and the USB/CPU arithmetic in PLAN.md §15:
+* **96 kHz** (`TWOFOLD_FS_96K`): same 12.288 MHz MCLK and jitter (128·fs), USB moves to 3-byte subslots because
+  4-byte packing does not fit a Full Speed frame at 96 k in both directions. EQ, saturation (no oversampling needed),
+  compressor, limiter, loudness and crossfeed stay; chorus, delay and reverb are off in this variant.
+* **4 outputs** (`TWOFOLD_OUT4`): a second PCM5102A on its own data line, sharing BCK/LRCK with the first (I2S1 TX
+  slaved to I2S0 through the GPIO matrix, one clock domain). The host sees a 2-in/4-out device at 48 k. Outputs 3-4
+  route from a second USB bus, a copy of the main out, the dry monitor or the wet return.
+* Not possible on one S3: both at once (4 out at 96 k exceeds the Full Speed frame budget). Effects at 96 k would need
+  a second S3 as an I2S co-processor.
 
 ## Repository map
 ```
