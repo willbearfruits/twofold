@@ -40,6 +40,8 @@ typedef struct {
     int8_t   tx_lead;            /* TX blocks queued ahead of the playing one (latency control) */
 } audio_stats_t;
 void audio_get_stats(audio_stats_t *s);
+/* Diagnostic: run the DSP with interrupts masked for `ms` (profile without interrupt/stall time). */
+void audio_diag_irqoff(uint32_t ms);
 
 #ifdef __cplusplus
 }

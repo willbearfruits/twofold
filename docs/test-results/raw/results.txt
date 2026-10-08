@@ -37,14 +37,14 @@ CLICK preset->TAPE ECHO 0.00
 CLICK preset->WARMTH 0.00
 CLICK soft-mute 0.00 (silent=1)
 RESULT PASS | preset crossfades: worst 1 ms HF spike 0.0 dB over its +-10 ms neighbourhood (limit 6 dB); soft mute 0.0 dB, reaches digital silence: yes
-BENCH realtime_factor 53.2 ns_per_frame 391.5
-BENCHSTAGE INPUT 6.1
-BENCHSTAGE EQ 2.1
-BENCHSTAGE SAT 25.9
-BENCHSTAGE CHORUS 16.5
-BENCHSTAGE DELAY 8.4
-BENCHSTAGE REVERB 23.3
-BENCHSTAGE COMP 8.5
-BENCHSTAGE OUTPUT 3.8
-BENCHSTAGE DITHER 5.3
-RESULT PASS | host benchmark (x86, informational): full chain incl. all effects runs 53x realtime (391 ns/frame)
+BENCH realtime_factor 70.0 ns_per_frame 297.8
+BENCHSTAGE INPUT 3.0
+BENCHSTAGE EQ 1.1
+BENCHSTAGE SAT 39.2
+BENCHSTAGE CHORUS 15.1
+BENCHSTAGE DELAY 5.2
+BENCHSTAGE REVERB 16.2
+BENCHSTAGE COMP 9.3
+BENCHSTAGE OUTPUT 2.4
+BENCHSTAGE DITHER 8.5
+RESULT PASS | host benchmark (x86, informational): full chain incl. all effects runs 70x realtime (298 ns/frame)

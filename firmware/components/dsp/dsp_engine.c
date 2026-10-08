@@ -88,6 +88,7 @@ static struct {
     /* glide */
     uint32_t   epoch_seen;
     int        glide_left;
+    uint32_t   seq_seen, blk_count;    /* parameter change tracking */
     /* quiet detector */
     uint32_t   quiet_samples;
 
@@ -200,6 +201,7 @@ int dsp_engine_init(const dsp_alloc_t *alloc)
     E.epoch_seen = params_preset_epoch();
     E.start_req_seen = ATOMIC_LD(&s_start_req_cnt);
     read_params(true);
+    E.seq_seen = params_seq();
     E.inited = true;
     return 0;
 }
@@ -398,7 +400,13 @@ static DSP_HOT void process_block(const int32_t *play, const int32_t *adc, int32
     if (glide) E.glide_left -= n;
     dsp_blk_t blk;
     dsp_blk_make(&blk, n, glide ? GLIDE_TAU_MS : TAU_MS, glide ? GLIDE_MS : FADE_MS, glide ? GLIDE_MS : XFADE_MS);
-    read_params(false);
+    /* Parameters: re-read on any change, plus every 8th block as a sweep (some changes, e.g. the input mode, apply
+     * only once a running crossfade has finished). Re-reading all ~80 every block cost ~10 % of a core. */
+    {
+        const uint32_t seq = params_seq();
+        if (seq != E.seq_seen || (E.blk_count & 7u) == 0) { E.seq_seen = seq; read_params(false); }
+        E.blk_count++;
+    }
     {
         const uint32_t rc = ATOMIC_LD(&s_start_req_cnt);
         if (rc != E.start_req_seen) {
@@ -414,6 +422,8 @@ static DSP_HOT void process_block(const int32_t *play, const int32_t *adc, int32
     const bool smute_full = sm0 == 0.f && smd == 0.f;      /* whole block is digital zero */
     const bool smute_off = sm0 == 1.f && smd == 0.f;
 
+    DSP_DBG_ADD(6, t0);                                     /* block setup */
+    uint32_t td = dsp_cycles();
     /* ---------- INPUT ---------- */
     to_float(play, pL, pR, n);
     to_float(adc, aL, aR, n);
@@ -423,6 +433,7 @@ static DSP_HOT void process_block(const int32_t *play, const int32_t *adc, int32
     E.acc_play[0] = dsp_maxf(E.acc_play[0], pl); E.acc_play[1] = dsp_maxf(E.acc_play[1], pr);
     float raw_l, raw_r;
     peak2(aL, aR, n, &raw_l, &raw_r);
+    DSP_DBG_ADD(7, td); td = dsp_cycles();                  /* int->float + peaks */
     /* input mode matrix (crossfaded on change) */
     if (!(E.in_xf >= 1.f && E.in_mode == 0)) {
         const float *A = k_in_mtx[E.in_from], *B = k_in_mtx[E.in_mode];
@@ -465,6 +476,7 @@ static DSP_HOT void process_block(const int32_t *play, const int32_t *adc, int32
             dither_convert(&E.dith_rec, xL, xR, rec, n);
         }
     }
+    DSP_DBG_ADD(8, td);                                     /* input mode/gain/record */
     t1 = dsp_cycles(); cyc[DSP_ST_INPUT] = t1 - t0; t0 = t1;
 
     /* ---------- monitor gains (THRU FX part enters before the EQ) ---------- */
@@ -587,11 +599,18 @@ static DSP_HOT void process_block(const int32_t *play, const int32_t *adc, int32
     prof_block(cyc, n);
 }
 
+uint32_t g_dsp_dbg[DSP_DBG_N];
+void dsp_engine_get_dbg(uint32_t *out)
+{
+    for (int i = 0; i < DSP_DBG_N; i++) { out[i] = g_dsp_dbg[i]; g_dsp_dbg[i] = 0; }
+}
+
 void dsp_engine_process(const int32_t *play, const int32_t *adc, int32_t *dac, int32_t *rec, int n)
 {
     while (n > 0) {
         const int k = n > DSP_BLOCK_MAX ? DSP_BLOCK_MAX : n;
         process_block(play, adc, dac, rec, k);
+        g_dsp_dbg[DSP_DBG_N - 1] += (uint32_t)k;
         if (play) play += 2 * k;
         if (adc) adc += 2 * k;
         dac += 2 * k;

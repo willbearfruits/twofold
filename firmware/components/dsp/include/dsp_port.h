@@ -21,5 +21,10 @@ static inline uint32_t dsp_cycles(void) { return 0; }
 #define DSP_CPU_HZ         240000000u   /* used only to express host numbers in "S3 percent" units */
 #endif
 
+/* Sub-stage cycle accounting for on-device profiling (read + reset via dsp_engine_get_dbg). */
+#define DSP_DBG_N 12
+extern uint32_t g_dsp_dbg[DSP_DBG_N];
+#define DSP_DBG_ADD(i, since) (g_dsp_dbg[(i)] += dsp_cycles() - (since))
+
 #define DSP_FS             48000
 #define DSP_BLOCK_MAX      64           /* engine accepts any n <= DSP_BLOCK_MAX per call */

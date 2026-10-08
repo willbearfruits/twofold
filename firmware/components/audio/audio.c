@@ -44,7 +44,7 @@ static const char *TAG = "audio";
 
 #define AUDIO_TASK_CORE     1
 #define AUDIO_TASK_PRIO     22
-#define AUDIO_TASK_STACK    6144
+#define AUDIO_TASK_STACK    12288   /* DSP block buffers (oversampled SAT ~6 KB deep); headroom reported by the status SysEx */
 #define BLOCK_SAMPLES       (AUDIO_BLOCK_FRAMES * 2)
 #define BLOCK_BYTES         (BLOCK_SAMPLES * (int)sizeof(int32_t))
 #define READ_TIMEOUT_MS     20
@@ -142,6 +142,9 @@ static void *alloc_big(size_t bytes)
     }
     return p;
 }
+
+static volatile int64_t s_irqoff_until_us;
+void audio_diag_irqoff(uint32_t ms) { s_irqoff_until_us = esp_timer_get_time() + (int64_t)ms * 1000; }
 
 esp_err_t audio_dsp_init(void)
 {
@@ -334,7 +337,15 @@ static IRAM_ATTR __attribute__((noinline)) void audio_loop(void)
 
         /* ---- DSP ---- */
         if (s_dsp_ok) {
-            dsp_engine_process(play, s_adc, s_dac, rec ? s_rec : NULL, AUDIO_BLOCK_FRAMES);
+            if (esp_timer_get_time() < s_irqoff_until_us) {
+                /* diagnostic (SysEx 05): run the DSP with interrupts masked, to separate DSP cost from
+                 * interrupt / cross-core stall time in the profile */
+                portDISABLE_INTERRUPTS();
+                dsp_engine_process(play, s_adc, s_dac, rec ? s_rec : NULL, AUDIO_BLOCK_FRAMES);
+                portENABLE_INTERRUPTS();
+            } else {
+                dsp_engine_process(play, s_adc, s_dac, rec ? s_rec : NULL, AUDIO_BLOCK_FRAMES);
+            }
         } else {
             memset(s_dac, 0, sizeof s_dac);
             memset(s_rec, 0, sizeof s_rec);

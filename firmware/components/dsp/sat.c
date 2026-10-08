@@ -207,8 +207,11 @@ DSP_HOT void sat_process(dsp_sat_t *s, float *L, float *R, const dsp_blk_t *b)
     }
     /* up 4x */
     float aL[2 * DSP_BLOCK_MAX], aR[2 * DSP_BLOCK_MAX], oL[4 * DSP_BLOCK_MAX], oR[4 * DSP_BLOCK_MAX];
+    uint32_t td = dsp_cycles();
     hb1_up(&s->up1, xL, xR, aL, aR, n);
+    DSP_DBG_ADD(0, td); td = dsp_cycles();
     hb2_up(&s->up2, aL, aR, oL, oR, 2 * n);
+    DSP_DBG_ADD(1, td); td = dsp_cycles();
 
     /* 192 kHz: shape, DC block, wet tilt, in-domain mix */
     {
@@ -245,8 +248,11 @@ DSP_HOT void sat_process(dsp_sat_t *s, float *L, float *R, const dsp_blk_t *b)
         s->tilt.z[0] = dsp_flush(tzl); s->tilt.z[1] = dsp_flush(tzr);
     }
     /* down 4x */
+    DSP_DBG_ADD(2, td); td = dsp_cycles();
     hb2_down(&s->dn2, oL, oR, aL, aR, 2 * n);
+    DSP_DBG_ADD(3, td); td = dsp_cycles();
     hb1_down(&s->dn1, aL, aR, xL, xR, n);
+    DSP_DBG_ADD(4, td);
     if (tone_act) {
         if (tone_moving) fo_run2_ramp(&s->de, &de0, xL, xR, n, b->inv_n);
         else fo_run2(&s->de, xL, xR, n);

@@ -73,6 +73,8 @@ typedef struct {
     uint32_t window_ms;
 } dsp_prof_t;
 void dsp_engine_get_prof(dsp_prof_t *p);
+/* Debug sub-stage cycle sums (DSP_DBG_N words, last = frames), reset on read. */
+void dsp_engine_get_dbg(uint32_t *out);
 
 /* ---- spectrum tap [any] ----
  * Mono (L+R)/2 of the DAC-bound signal, pre-limiter, written to a lock-free SPSC ring.

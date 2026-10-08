@@ -17,10 +17,12 @@
 #define DSP_LOG22DB     6.02059991327962f    /* 20*log10(2) : log2(gain) -> dB */
 #define DSP_TINY        1e-18f               /* anti-denormal offset injected into recursive loops */
 
-static inline uint32_t dsp_f2u(float f) { uint32_t u; memcpy(&u, &f, 4); return u; }
-static inline float    dsp_u2f(uint32_t u) { float f; memcpy(&f, &u, 4); return f; }
+/* __builtin_memcpy, not memcpy: ESP-IDF builds with -fno-builtin-memcpy, which turned every punning memcpy into a
+ * real ROM call (measured: ~100 cycles per sample in the meters alone). The builtin compiles to a register move. */
+static inline uint32_t dsp_f2u(float f) { uint32_t u; __builtin_memcpy(&u, &f, 4); return u; }
+static inline float    dsp_u2f(uint32_t u) { float f; __builtin_memcpy(&f, &u, 4); return f; }
 
-static inline float dsp_absf(float x) { return dsp_u2f(dsp_f2u(x) & 0x7fffffffu); }
+static inline float dsp_absf(float x) { return __builtin_fabsf(x); }   /* abs.s on the Xtensa FPU */
 static inline float dsp_minf(float a, float b) { return a < b ? a : b; }
 static inline float dsp_maxf(float a, float b) { return a > b ? a : b; }
 static inline float dsp_clampf(float x, float lo, float hi) { return x < lo ? lo : (x > hi ? hi : x); }
