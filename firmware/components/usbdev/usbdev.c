@@ -51,6 +51,9 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_private/usb_phy.h"
+#include "esp_system.h"
+#include "soc/rtc_cntl_reg.h"
+#include "soc/usb_serial_jtag_reg.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -355,4 +358,23 @@ esp_err_t usbdev_init(void)
     if (xTaskCreatePinnedToCore(usb_task, "tinyusb", USB_TASK_STACK, NULL, USB_TASK_PRIO, NULL, USB_TASK_CORE) != pdPASS)
         return ESP_ERR_NO_MEM;
     return ESP_OK;
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * Host-driven flashing (no BOOT button): detach from the bus so the host forgets the TWOFOLD device, hand the
+ * USB pads back to the built-in USB-Serial/JTAG controller, ask the ROM for download mode on the next reset,
+ * and restart. The ROM then enumerates as 303a:1001 and `idf.py flash` / esptool work as usual.
+ * (Same sequence as Arduino-ESP32's usb_persist_restart(RESTART_BOOTLOADER) on the ESP32-S3.)
+ */
+
+void usbdev_reboot_to_bootloader(void)
+{
+    tud_disconnect();                                   /* pull-up off: the host sees a detach */
+    vTaskDelay(pdMS_TO_TICKS(200));
+    /* USB pads back to USB-Serial/JTAG on the internal PHY */
+    CLEAR_PERI_REG_MASK(RTC_CNTL_USB_CONF_REG, RTC_CNTL_SW_HW_USB_PHY_SEL | RTC_CNTL_SW_USB_PHY_SEL | RTC_CNTL_USB_PAD_ENABLE);
+    CLEAR_PERI_REG_MASK(USB_SERIAL_JTAG_CONF0_REG, USB_SERIAL_JTAG_PHY_SEL);
+    SET_PERI_REG_MASK(USB_SERIAL_JTAG_CONF0_REG, USB_SERIAL_JTAG_USB_PAD_ENABLE);
+    REG_WRITE(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);   /* consumed by the ROM on the next boot */
+    esp_restart();
 }

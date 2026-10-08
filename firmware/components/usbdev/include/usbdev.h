@@ -15,6 +15,7 @@
  */
 #pragma once
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include "esp_err.h"
 #include "esp_attr.h"
@@ -63,6 +64,13 @@ typedef struct {
     uint32_t in_packets;
 } usbdev_stats_t;
 void usbdev_get_stats(usbdev_stats_t *s);
+
+/* USB-MIDI SysEx service channel (manufacturer ID 0x7D). Complete incoming messages addressed to 0x7D are passed
+ * to usb_midi_sysex_received() (weak; main/hostlink.c implements it), from the ctrl task. */
+void usb_midi_sysex_received(const uint8_t *msg, size_t len);
+bool usb_midi_send_sysex(const uint8_t *buf, size_t len, uint32_t timeout_ms);
+/* Leave the application for the ROM serial/JTAG download mode (host-driven flashing, no BOOT button). */
+void usbdev_reboot_to_bootloader(void);
 
 /* ---- USB-MIDI 1.0 (ctrl task) ---- */
 bool usb_midi_mounted(void);
