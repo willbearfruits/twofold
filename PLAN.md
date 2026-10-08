@@ -201,6 +201,9 @@ Estimates (est.) are replaced by measurements in README §Measurements.
 | TPDF dither × 4 channels, float→int24 | 40 | 0.8 |
 | **total, everything on** | **≈1520–1620** | **≈30–32 %** (budget: < 60 %) |
 
+**Measured on the board (§14):** 52.6 % average / 60.8 % worst block with every effect on (radios on or off). The estimate
+above was ~4× too optimistic: the in-order Xtensa FPU sustains well under one instruction per cycle on this code.
+
 Measurement: `dsp_engine` brackets each stage with `esp_cpu_get_cycle_count()` and accumulates per-block
 avg/max over 1 s windows. These are shown on the hidden Diagnostics screen and in the web API.
 
@@ -326,5 +329,14 @@ therefore enforced by *when* we write:
   I2C 12/13, encoder 4/5/6, MAX98357A enable 11, RGB LED 48, MCLK (PCM1808 only) on spare GPIO21; PCM5102A XSMT
   bridged high (output enable = amp SD only). The kit input is an INMP441 mic (mono, left slot); a PCM1808 still
   drops in on GPIO10 + MCLK 21. §5 below is the original S3-Zero plan; `board_config.h` / docs/wiring.md are current.
+* (bring-up) **CPU measured on the board: 130 % with all effects** (the estimate above said ~31 %). Fixed to 52.6 %, step by
+  step with on-device sub-stage cycle counters (SysEx 07). The causes and fixes:
+  * `-fno-builtin-memcpy` made the float-punning helpers ROM calls per sample;
+  * parameters were re-read every block;
+  * filter state round-tripped through memory every sample;
+  * the chorus used 6 Hermite taps; it now uses 3 on mid/side lines;
+  * saturation dropped from 4× to 2× oversampling (Kconfig option).
+
+  WiFi (AP + web) measured at ~96 KB of internal RAM, so the reverb's long lines stay in PSRAM.
 * (initial) The S3 I2C controller has no DMA. The display uses the IDF interrupt-driven asynchronous I2C master
   on core 0 with a dirty-band flush. This meets "never block audio" (different core, no shared locks) without DMA.

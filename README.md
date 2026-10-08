@@ -160,11 +160,23 @@ Hence Studio Mode, but the hardware matters too:
 | bit-perfect paths | DAC at unity/flat chain and record at unity: 0 LSB error |
 | click test, all 78 parameters def→max→min→def, presets, soft mute | worst 3.3 dB (limit 6 dB); presets 0.0 dB |
 
-**CPU (ESP32-S3, 240 MHz).** Every DSP block is bracketed with cycle counters. The diagnostics screen shows avg/max
-per block; `/api/state` and the web editor header show the total. **This has not been measured on silicon yet** (no hardware was available).
-The static estimate with every effect on is **≈30–32 % of one core** (PLAN §7; budget < 60 %). The host profile's
-relative breakdown: saturation 33 %, chorus 18 %, reverb 17 %, comp 10 %, dither 7 %, delay 6 %, input 5 %, output 3 %,
-EQ 1 %. The full chain runs 53× realtime on the x86 host.
+**CPU (ESP32-S3, 240 MHz), measured on the board** with `tools/twofold_status.sh` (every DSP block is bracketed with
+cycle counters; also on the diagnostics screen):
+
+| | all effects off | **all effects on** | all effects on + WiFi AP |
+|---|---|---|---|
+| average | 13 % | **52.6 %** (budget < 60 %) | 52.6 % |
+| worst block | 17 % | 60.8 % | 60.9 % |
+
+Per block with everything on: reverb 15.6, saturation 13.8, chorus 6.7, delay 6.3, comp 4.0, input 2.3, dither 2.1,
+output + limiter 1.4, EQ 0.5 (% of one core). Radios run on core 0 and do not change the audio core's load.
+The first on-device measurement was 130 %. The fixes, each measured on the board, were:
+* ESP-IDF builds with `-fno-builtin-memcpy`, so the `memcpy`-based float punning in the DSP math helpers turned into a
+  ROM call per sample. Using `__builtin_memcpy` and `__builtin_fabsf` (`abs.s`) took it from 128 % to 71 %.
+* parameters are re-read only on change;
+* the half-band filters and chorus taps were restructured so the in-order FPU has independent work;
+* the chorus moved to mid/side lines with one tap per voice;
+* saturation oversampling went from 4× to 2× (see the limitations below).
 
 **Memory** (`idf.py size`, WiFi + BLE + httpd linked): image 1.40 MB (31 % of each 1.94 MB OTA slot free);
 static DIRAM 217 KB used / 124 KB left, of which 58 KB is DSP code placed in IRAM. DSP buffers at runtime:
@@ -177,8 +189,11 @@ prints the exact internal/PSRAM split.
 ## Known limitations
 * **Not yet run on hardware.** Everything below "needs hardware" is unverified on silicon.
 * 48 kHz only (on the S3 PLL, 44.1 kHz would be equally fractional; OS resamplers handle it).
-* Saturation at extreme settings (24 dB drive on a −6 dBFS 13 kHz sine) aliases at −33 dBc (still 23 dB better
-  than no oversampling). Musical settings are below −130 dBc.
+* Saturation runs at 2× oversampling to fit the CPU budget: aliasing stays at −138 to −152 dBc at musical drive (≤ 12 dB),
+  but at extreme settings (24 dB drive on a −6 dBFS 9–13 kHz sine) it reaches −19 to −22 dBc. `menuconfig` → TWOFOLD DSP
+  offers 4× (−33 to −47 dBc there, about +13 % CPU).
+* WiFi in setup-AP mode uses about 96 KB of internal RAM (124 → 29 KB free), so WiFi and BLE at the same time do not fit
+  yet. It needs internal RAM freed elsewhere (e.g. moving cold DSP code out of IRAM).
 * The reverb's wet signal is band-limited to ~10 kHz (24 kHz tank: an internal-RAM trade-off, see PLAN §14).
 * Flash writes stall both CPUs on the S3, so settings are committed only in audio-safe windows (silence / no stream)
   or under a brief soft-mute for explicit saves. Unplugging within ~3 s of a change, while audio is playing, can lose
@@ -190,7 +205,6 @@ prints the exact internal/PSRAM split.
 ## Needs real hardware to confirm
 1. USB enumeration and driverless streaming on Linux (PipeWire/ALSA), macOS and Windows 10/11, and hours-long
    drift-click-free playback with FIFO_COUNT feedback (`tools/loopback.py --drift`).
-2. Real CPU per DSP block (diagnostics screen), especially the reverb if its long lines land in PSRAM.
 3. Actual internal heap at boot, and WiFi + BLE enabled together without running out of internal RAM.
 4. Loopback latency, frequency response, THD+N and noise floor, Studio Mode vs WiFi on (`tools/loopback.py`).
 5. PCM1808 slave mode with the PLL-derived MCLK, and low-jitter mode with the PCM1808 as master.
