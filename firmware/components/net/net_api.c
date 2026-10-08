@@ -233,6 +233,21 @@ static void state_body(jw_t *w, void *ctx)
 static esp_err_t h_state(httpd_req_t *req) { return send_obj(req, state_body, NULL); }
 
 static void meters_body(jw_t *w, void *ctx) { net_meters_json(w); }
+
+/* GET /api/tap: the most recent samples of the DAC-bound mono signal (pre-limiter), as int24 (diagnostic). */
+#define TAP_N 1536
+static void tap_body(jw_t *w, void *ctx)
+{
+    (void)ctx;
+    static float *tmp;
+    if (!tmp) tmp = heap_caps_malloc(TAP_N * sizeof(float), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    size_t n = tmp ? dsp_engine_spectrum_read(tmp, TAP_N) : 0;
+    jw_int(w, "n", (long)n);
+    jw_arr(w, "s");
+    for (size_t i = 0; i < n; i++) jw_int(w, NULL, (long)(tmp[i] * 8388608.f));
+    jw_arr_end(w);
+}
+static esp_err_t h_tap(httpd_req_t *req) { return send_obj(req, tap_body, NULL); }
 static esp_err_t h_meters(httpd_req_t *req) { return send_obj(req, meters_body, NULL); }
 
 /* ------------------------------------------------------------------ POST /api/param */
@@ -701,6 +716,7 @@ esp_err_t net_api_register(httpd_handle_t hd)
         { .uri = "/api/params",         .method = HTTP_GET,  .handler = h_params },
         { .uri = "/api/state",          .method = HTTP_GET,  .handler = h_state },
         { .uri = "/api/meters",         .method = HTTP_GET,  .handler = h_meters },
+        { .uri = "/api/tap",            .method = HTTP_GET,  .handler = h_tap },
         { .uri = "/api/info",           .method = HTTP_GET,  .handler = h_info },
         { .uri = "/api/param",          .method = HTTP_POST, .handler = h_param },
         { .uri = "/api/presets",        .method = HTTP_GET,  .handler = h_presets },
@@ -733,7 +749,7 @@ static void run_pending_after(void) { after_t a = s_pending_after; s_pending_aft
  * Same API as HTTP: method + path(+query) + JSON body -> status + JSON into a buffer-mode writer. */
 typedef struct { const char *path; void (*body)(jw_t *, void *); } get_route_t;
 static const get_route_t k_gets[] = {
-    { "/api/params", params_body }, { "/api/state", state_body }, { "/api/meters", meters_body },
+    { "/api/params", params_body }, { "/api/state", state_body }, { "/api/meters", meters_body }, { "/api/tap", tap_body },
     { "/api/info", info_body }, { "/api/presets", presets_body }, { "/api/ccmap", ccmap_body }, { "/api/wifi", wifi_body },
 };
 typedef struct { const char *path; apply_fn_t fn; size_t max; } post_route_t;

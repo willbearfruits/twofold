@@ -271,11 +271,17 @@ static IRAM_ATTR __attribute__((noinline)) void audio_loop(void)
 {
     play_state_t play_state = PLAY_IDLE;
     uint32_t play_gen = usbdev_play_gen(), rec_gen = usbdev_rec_gen();
-    /* Overflows between i2s_channel_enable() and this point (boot: task start, logging) are not errors: start
-     * counting from here. If TX already overflowed, the preload is gone and our next write lands in the playing slot. */
-    uint32_t tx_ovf_seen = s_tx_ovf, rx_ovf_seen = s_rx_ovf;
-    uint32_t w_next = tx_ovf_seen ? s_tx_slots : AUDIO_TX_PRELOAD;   /* TX slot index our next write lands in */
-    int32_t  lead_target = 0;
+    /* RX overflows between i2s_channel_enable() and here (task start) are not errors: count from now. A TX
+     * overflow from that window is resynced by the first iteration exactly like any other (w_next = the slot read
+     * in that iteration, after the blocking RX read), only not counted: reading s_tx_slots here instead would be
+     * one slot stale and every write would land in the buffer the DMA is playing. */
+    uint32_t w_next = AUDIO_TX_PRELOAD;       /* TX slot index our next write lands in */
+    uint32_t tx_ovf_seen = 0, rx_ovf_seen = s_rx_ovf;
+    bool     tx_first = true;
+    /* One block of TX lead (0.67 ms): the write for block k lands two slots ahead of the one playing, so the DSP
+     * time plus the RX/TX boundary phase never races the DMA. With lead 0 the margin is one slot minus the DSP
+     * time minus the phase; it was only ever "enough" because a boot-time ring overflow accidentally added a slot. */
+    int32_t  lead_target = 1;
     uint32_t good_blocks = 0, late_events = 0;
     uint64_t phase_acc = 0;
     uint32_t phase_n = 0;
@@ -378,11 +384,13 @@ static IRAM_ATTR __attribute__((noinline)) void audio_loop(void)
         if (tx_ovf != tx_ovf_seen) {
             /* Free-buffer queue overflowed: IDF dropped the oldest entries; the oldest remaining buffer is the
              * one now playing, so our next write lands in `slot`. */
-            if (flash_stall) s_st.stalls_flash += tx_ovf - tx_ovf_seen;
+            if (tx_first) { /* boot window: resync only */ }
+            else if (flash_stall) s_st.stalls_flash += tx_ovf - tx_ovf_seen;
             else s_st.i2s_errors += tx_ovf - tx_ovf_seen;
             tx_ovf_seen = tx_ovf;
             w_next = slot;
         }
+        tx_first = false;
         int32_t lead = (int32_t)(w_next - slot) - 1;  /* slots queued between the playing one and ours */
         if (lead < lead_target) {
             if (lead < 0 && good_blocks > UNMUTE_BLOCKS) {

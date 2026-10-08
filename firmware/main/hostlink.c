@@ -81,13 +81,13 @@ static size_t status_report(char *b, size_t n)
                       (double)d.prof.max_pct[i]);
     if (k > 0 && (size_t)k < n)
         k += snprintf(b + k, n - (size_t)k,
-                      " | fx%s%s%s%s%s%s | xrun play %lu rec %lu | i2s err %lu late %lu flash-stall %lu | fb %.4f | fifo out %ld in %ld"
+                      " | fx%s%s%s%s%s%s | xrun play %lu rec %lu | i2s err %lu late %lu flash-stall %lu lead %d | fb %.4f | fifo out %ld in %ld"
                       " | heap int %lu min %lu psram %lu | stack free audio %u ctrl %u ui %u | up %lus | usb %s%s%s | wifi %d ble %d",
                       params_get_bool(P_SAT_ON) ? " sat" : "", params_get_bool(P_CHO_ON) ? " cho" : "",
                       params_get_bool(P_DLY_ON) ? " dly" : "", params_get_bool(P_REV_ON) ? " rev" : "",
                       params_get_bool(P_CMP_ON) ? " cmp" : "", params_get(P_MON_MIX) > 0.f ? " mon" : "",
                       (unsigned long)d.xrun_play, (unsigned long)d.xrun_rec, (unsigned long)d.i2s_errors,
-                      (unsigned long)d.tx_late, (unsigned long)d.stalls_flash,
+                      (unsigned long)d.tx_late, (unsigned long)d.stalls_flash, (int)d.tx_lead,
                       (double)d.usb_feedback, (long)d.usb_out_fifo, (long)d.usb_in_fifo,
                       (unsigned long)d.heap_int_free, (unsigned long)d.heap_int_min, (unsigned long)d.heap_ext_free,
                       stack_free("audio"), stack_free("ctrl"), stack_free("ui"), (unsigned long)d.uptime_s, st.usb_mounted ? "up" : "down", st.play_active ? " play" : "",

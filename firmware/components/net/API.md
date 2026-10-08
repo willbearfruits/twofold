@@ -46,3 +46,6 @@ Framing (`net_usb.c`): request = `u32 LE length` + `"METHOD /path[?query]\n"` + 
 * client → device: `{"t":"set","k":"eq.b2.gain","v":3.5}` or `{"t":"set","values":{…}}`
 * device → client, ~15 Hz: `{"t":"u","m":{meters…},"p":{changed params…},"s":{status…}}`. Status is sent at 1 Hz
   or on change. One frame is in flight at a time, so a slow client delays updates but never loses parameter changes.
+
+## GET /api/tap (diagnostic)
+The most recent 1536 samples of the DAC-bound mono signal (pre master volume / limiter), as int24: `{"n":1536,"s":[...]}`. Used by the host analysis scripts; costs ~15 KB per call.

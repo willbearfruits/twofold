@@ -790,6 +790,102 @@ static int test_xfeed(float mode)
     return 0;
 }
 
+
+/* ---- crunch: time-resolved residual while effects switch on (the "bitcrushed, then slowly fixed" report) ----
+ * A 1 kHz sine at `lvl` dBFS; at t=0.5 s the named effects switch on (as a user would, several in one go).
+ * Per 100 ms window the best-fit 1 kHz sine is removed; what remains (distortion, zipper noise, modulation
+ * sidebands, clipping) is printed in dB relative to the fundamental. Steady legit effects (reverb mod) give a
+ * flat line; a transient artefact shows as a bump that decays. */
+static double resid_db(const float *x, int stride, int a, int n)
+{
+    double sc = 0, ss = 0, c, s_, ac = 0, as = 0;
+    for (int i = 0; i < n; i++) {
+        c = cos(2 * M_PI * 1000.0 * (a + i) / FS); s_ = sin(2 * M_PI * 1000.0 * (a + i) / FS);
+        sc += x[(a + i) * stride] * c; ss += x[(a + i) * stride] * s_; ac += c * c; as += s_ * s_;
+    }
+    double A = sc / ac, B = ss / as, fund = 0, res = 0;
+    for (int i = 0; i < n; i++) {
+        c = cos(2 * M_PI * 1000.0 * (a + i) / FS); s_ = sin(2 * M_PI * 1000.0 * (a + i) / FS);
+        double fit = A * c + B * s_, r = x[(a + i) * stride] - fit;
+        fund += fit * fit; res += r * r;
+    }
+    return 10 * log10((res + 1e-30) / (fund + 1e-30));
+}
+
+static int test_crunch(const char *what, float lvl_db, int limiter)
+{
+    base_params(limiter != 0);
+    params_set(P_VOLUME, 0.f, SRC_INIT);
+    engine_start();
+    const int T = FS * 5, W = FS / 10;
+    float *in = buf(T), *out = buf(T);
+    const float amp = (float)pow(10, lvl_db / 20);
+    for (int i = 0; i < T; i++) { in[2 * i] = in[2 * i + 1] = amp * (float)sin(2 * M_PI * 1000.0 * i / FS); }
+    run(in, NULL, out, FS / 2);
+    /* switch on like the Vocal Plate / a user clicking several effects */
+    if (strstr(what, "eq")) {
+        params_set(P_EQ_ON, 1, SRC_UI);
+        params_set(P_EQ_B1_FREQ, 120, SRC_UI); params_set(P_EQ_B1_GAIN, -2, SRC_UI);
+        params_set(P_EQ_B3_FREQ, 3000, SRC_UI); params_set(P_EQ_B3_GAIN, 2, SRC_UI); params_set(P_EQ_B3_Q, 1.2f, SRC_UI);
+        params_set(P_EQ_B5_FREQ, 10000, SRC_UI); params_set(P_EQ_B5_GAIN, 2.5f, SRC_UI);
+    }
+    if (strstr(what, "cmp")) { params_set(P_CMP_ON, 1, SRC_UI); params_set(P_CMP_THRESH, -18, SRC_UI); params_set(P_CMP_RATIO, 3, SRC_UI);
+                               params_set(P_CMP_ATTACK, 5, SRC_UI); params_set(P_CMP_RELEASE, 120, SRC_UI); params_set(P_CMP_MAKEUP, 4, SRC_UI); }
+    if (strstr(what, "rev")) { params_set(P_REV_ON, 1, SRC_UI); params_set(P_REV_DECAY, 1.8f, SRC_UI); params_set(P_REV_PREDLY, 30, SRC_UI);
+                               params_set(P_REV_DAMP, 40, SRC_UI); params_set(P_REV_MIX, 18, SRC_UI); }
+    if (strstr(what, "sat")) { params_set(P_SAT_ON, 1, SRC_UI); params_set(P_SAT_DRIVE, 8, SRC_UI); }
+    if (strstr(what, "cho")) { params_set(P_CHO_ON, 1, SRC_UI); }
+    if (strstr(what, "dly")) { params_set(P_DLY_ON, 1, SRC_UI); params_set(P_DLY_MIX, 25, SRC_UI); }
+    if (strstr(what, "loud")) { params_set(P_LOUD_ON, 1, SRC_UI); }
+    if (strstr(what, "xf")) { params_set(P_XF_ON, 1, SRC_UI); }
+    run(in + FS, NULL, out + FS, T - FS / 2);
+    printf("CRUNCH %s lvl %.0f lim %d:", what, lvl_db, limiter);
+    double peak = 0, late = 0;
+    for (int w = 0; w < T / W; w++) {
+        double r = resid_db(out, 2, w * W, W);
+        printf(" %.0f", r);
+        if (w >= 5 && w < 25) peak = fmax(peak, r + 200);
+        if (w >= 40) late = fmax(late, r + 200);
+    }
+    double pk = 0; for (int i = 0; i < T; i++) pk = fmax(pk, fabs(out[2 * i]));
+    printf(" | peak %.2f dBFS, worst 0.5-2.5 s %.0f dB, after 4 s %.0f dB\n", 20 * log10(pk + 1e-30), peak - 200, late - 200);
+    return 0;
+}
+
+/* render: <in.i32> <out.i32> <what> <lim> : the crunch switch-on applied to a file (device comparison) */
+static int test_render(const char *fin, const char *fout, const char *what, int limiter)
+{
+    FILE *fi = fopen(fin, "rb"), *fo = fopen(fout, "wb");
+    if (!fi || !fo) { perror("render"); return 1; }
+    base_params(limiter != 0);
+    params_set(P_VOLUME, 0.f, SRC_INIT);
+    if (getenv("TF_KV")) {                 /* apply a device state dump: "key value" per line */
+        FILE *kv = fopen(getenv("TF_KV"), "r"); char key[48]; double v;
+        while (kv && fscanf(kv, "%47s %lf", key, &v) == 2) { param_id_t id = params_find(key); if (id >= 0) params_set(id, (float)v, SRC_INIT); }
+        if (kv) fclose(kv);
+    }
+    engine_start();
+    int32_t pi[BLK * 2], di[BLK * 2], ri[BLK * 2];
+    long frames = 0;
+    for (;;) {
+        size_t n = fread(pi, sizeof(int32_t) * 2, BLK, fi);
+        if (!n) break;
+        if (frames == (getenv("TF_SW") ? atol(getenv("TF_SW")) : FS)) {   /* switch on after 1 s (or TF_SW frames) */
+            if (strstr(what, "cmp")) { params_set(P_CMP_THRESH, -18, SRC_UI); params_set(P_CMP_RATIO, 3, SRC_UI); params_set(P_CMP_ATTACK, 5, SRC_UI);
+                                       params_set(P_CMP_RELEASE, 120, SRC_UI); params_set(P_CMP_MAKEUP, 4, SRC_UI); params_set(P_CMP_ON, 1, SRC_UI); }
+            if (strstr(what, "rev")) { params_set(P_REV_DECAY, 1.8f, SRC_UI); params_set(P_REV_PREDLY, 30, SRC_UI); params_set(P_REV_DAMP, 40, SRC_UI);
+                                       params_set(P_REV_MIX, 18, SRC_UI); params_set(P_REV_ON, 1, SRC_UI); }
+        }
+        for (size_t i = 0; i < 2 * n; i++) pi[i] <<= 8;      /* int24 -> left-justified int32 */
+        dsp_engine_process(pi, NULL, di, ri, (int)n);
+        fwrite(di, sizeof(int32_t) * 2, n, fo);
+        frames += (long)n;
+    }
+    fclose(fi); fclose(fo);
+    printf("rendered %ld frames\n", frames);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 3) { fprintf(stderr, "usage: dsp_tests <test> <outdir> [arg]\n"); return 2; }
@@ -812,6 +908,8 @@ int main(int argc, char **argv)
     else if (!strcmp(t, "dither")) test_dither(0);
     else if (!strcmp(t, "bitperfect")) test_dither(1);
     else if (!strcmp(t, "bench")) test_bench();
+    else if (!strcmp(t, "render") && argc > 6) test_render(argv[3], argv[4], argv[5], atoi(argv[6]));
+    else if (!strcmp(t, "crunch") && argc > 5) test_crunch(argv[3], (float)atof(argv[4]), atoi(argv[5]));
     else if (!strcmp(t, "nparams")) { printf("%d\n", P_COUNT); return 0; }
     else { fprintf(stderr, "unknown test %s\n", t); return 2; }
     return g_fail;

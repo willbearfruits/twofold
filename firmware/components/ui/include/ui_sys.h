@@ -46,6 +46,7 @@ typedef struct {
     uint32_t i2s_errors;         /* DMA overflow/underflow events */
     uint32_t tx_late;            /* TX blocks that missed their slot (subset of i2s_errors) */
     uint32_t stalls_flash;       /* DMA overflows during our own flash writes (expected) */
+    int8_t   tx_lead;            /* TX blocks queued ahead of the playing one */
     int32_t  usb_out_fifo;       /* bytes in TinyUSB OUT FIFO */
     int32_t  usb_in_fifo;
     float    usb_feedback;       /* frames per ms reported to host (e.g. 48.0013) */

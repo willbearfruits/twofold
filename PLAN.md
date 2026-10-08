@@ -433,3 +433,14 @@ So A and B each fit; A+B does not on one S3 (the S3 has no High Speed USB). No n
   flash writes (storage/OTA call `audio_flash_write_hint()`) count as `flash-stall`, not I2S errors. A fresh boot
   now shows all counters at 0. `tools/release.sh` builds the tester bundle, `docs/QUICKSTART.md` is the one-page
   guide, `tools/loopback.py --rec-device` measures the DAC path through another interface's line inputs.
+* (v1.0.2) **Audible crunch with any CPU-heavy effect, no counter tripped.** Root cause: the TX latency control
+  wrote block k into the DMA slot right after the one playing (lead 0), so the write had to land within one slot
+  minus the DSP time minus the RX/TX boundary phase. That margin only ever held because the boot-time I2S log line
+  (printed after `i2s_channel_enable()`) overflowed the ring and the first-iteration resync left the writes one extra
+  slot ahead. v1.0.0 moved the log before the enable, removed the accident, and the reverb/saturation (30 %+ CPU)
+  started racing the DMA: partly-late writes that no counter detects. Fix: one block of TX lead by default
+  (0.67 ms more latency; `lead` in the status line). Found by A/B flashing (bff71ff → ae3aab4 → 4e81bcf → 4d4c41d
+  clean, 2a6c33b crushing); every digital measurement (host-vs-device sample comparison, spectral tests, dither)
+  was clean because they all sit before the DMA. Lesson: a listening A/B of builds beats instruments for delivery
+  bugs. Diagnostic kept: `GET /api/tap` (last 1536 pre-limiter mono samples), `tools/loopback.py --rec-device`,
+  host `render`/`crunch` test modes.

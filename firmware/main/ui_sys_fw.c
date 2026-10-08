@@ -53,6 +53,7 @@ void sys_get_diag(sys_diag_t *d)
     d->i2s_errors = a.i2s_errors;
     d->tx_late = a.tx_late;
     d->stalls_flash = a.stalls_flash;
+    d->tx_lead = a.tx_lead;
     d->measured_fs = a.measured_fs;
     usbdev_stats_t u;
     usbdev_get_stats(&u);
