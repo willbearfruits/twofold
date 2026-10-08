@@ -183,7 +183,7 @@ int dsp_engine_init(const dsp_alloc_t *alloc)
     memset(&E, 0, sizeof E);
     eq_init(&E.eq);
     sat_init(&E.sat);
-    if (cho_init(&E.cho, alloc->alloc_fast)) return -1;
+    if (cho_init(&E.cho, alloc->alloc_hot ? alloc->alloc_hot : alloc->alloc_fast)) return -1;
     if (dly_init(&E.dly, alloc->alloc_big)) return -2;
     if (rev_init(&E.rev, alloc->alloc_fast, alloc->alloc_big)) return -3;
     comp_init(&E.cmp);

@@ -24,7 +24,8 @@
 enum { CHO_CHORUS = 0, CHO_ENSEMBLE, CHO_VIBRATO };
 
 typedef struct {
-    float   *line[2];
+    float   *line[2];                 /* mid / side */
+    uint8_t  dmask;                   /* modes whose delays were computed in the last block */
     int      w;
     float    ph, fph;                       /* slow / fast LFO phase (cycles) */
     float    drift_tgt[3], drift1[3], drift2[3];
@@ -39,8 +40,8 @@ typedef struct {
     bool     running;
 } dsp_chorus_t;
 
-/* alloc_fast: internal RAM for 2 x CHO_LEN floats. Returns 0 on success. */
-int  cho_init(dsp_chorus_t *c, void *(*alloc_fast)(size_t));
+/* alloc_hot: internal RAM (random-access taps every sample) for 2 x CHO_LEN floats. Returns 0 on success. */
+int  cho_init(dsp_chorus_t *c, void *(*alloc_hot)(size_t));
 void cho_reset(dsp_chorus_t *c);
 void cho_set(dsp_chorus_t *c, bool on, int mode, float rate_hz, float depth_pct, float mix_pct);
 void cho_settle(dsp_chorus_t *c);

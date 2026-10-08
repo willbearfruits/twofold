@@ -133,6 +133,13 @@ static void *alloc_fast(size_t bytes)
     return p;
 }
 
+/* Small buffers read at random positions every sample (chorus taps): internal RAM regardless of the reserve. */
+static void *alloc_hot(size_t bytes)
+{
+    void *p = heap_caps_aligned_calloc(16, 1, bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    return p ? p : alloc_fast(bytes);
+}
+
 static void *alloc_big(size_t bytes)
 {
     void *p = heap_caps_aligned_calloc(16, 1, bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -148,7 +155,7 @@ void audio_diag_irqoff(uint32_t ms) { s_irqoff_until_us = esp_timer_get_time() +
 
 esp_err_t audio_dsp_init(void)
 {
-    static const dsp_alloc_t alloc = { .alloc_fast = alloc_fast, .alloc_big = alloc_big };
+    static const dsp_alloc_t alloc = { .alloc_fast = alloc_fast, .alloc_big = alloc_big, .alloc_hot = alloc_hot };
     size_t int_before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     size_t ext_before = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
     int r = dsp_engine_init(&alloc);

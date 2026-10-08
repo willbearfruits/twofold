@@ -33,3 +33,5 @@ void hb2_up(dsp_hb_t *h, const float *iL, const float *iR, float *oL, float *oR,
 /* 2x down: 2n input frames -> n output frames. */
 void hb1_down(dsp_hb_t *h, const float *iL, const float *iR, float *oL, float *oR, int n);
 void hb2_down(dsp_hb_t *h, const float *iL, const float *iR, float *oL, float *oR, int n);
+/* mono 2x down with HB1 (channel 0 state): 2n input samples -> n output */
+void hb1_down_mono(dsp_hb_t *h, const float *in, float *out, int n);

@@ -1,24 +1,25 @@
-RESULT PASS | eq cfg0: max |measured - analytic RBJ| = 0.0046 dB (at 206 Hz), limit 0.05 dB
-RESULT PASS | eq cfg1: max |measured - analytic RBJ| = 0.0093 dB (at 20 Hz), limit 0.05 dB
-RESULT PASS | eq cfg2: max |measured - analytic RBJ| = 0.0043 dB (at 31 Hz), limit 0.05 dB
+RESULT PASS | eq cfg0: max |measured - analytic RBJ| = 0.0051 dB (at 206 Hz), limit 0.05 dB
+RESULT PASS | eq cfg1: max |measured - analytic RBJ| = 0.0094 dB (at 20 Hz), limit 0.05 dB
+RESULT PASS | eq cfg2: max |measured - analytic RBJ| = 0.0042 dB (at 31 Hz), limit 0.05 dB
 RESULT PASS | limiter: peak out 0.966051 (-0.300 dBFS) with +12 dB overs, ceiling -0.30 dBFS
 RESULT PASS | limiter below threshold: output bit-identical to limiter-off (lookahead 0 samples)
-RESULT PASS | reverb decay 1.0 s: measured RT60 0.96 s (4.0 % off), L/R tail correlation -0.015, first output 30.1 ms (pre-delay 20 ms)
-RESULT PASS | reverb decay 2.2 s: measured RT60 2.02 s (8.2 % off), L/R tail correlation -0.009, first output 30.1 ms (pre-delay 20 ms)
-RESULT PASS | reverb decay 6.0 s: measured RT60 5.16 s (13.9 % off), L/R tail correlation -0.005, first output 30.1 ms (pre-delay 20 ms)
-RESULT PASS | delay sync=FREE mode=STEREO: L@12052 L@24053, spacing 12001 (expect 12000), fixed engine latency 52 samples; successive same-side tap ratio -6.14 dB
-RESULT PASS | delay sync=FREE mode=PING-PONG: L@12052 R@24053 L@36053, spacing 12001/12000 (expect 12000), fixed engine latency 52 samples; successive same-side tap ratio -11.89 dB
-RESULT PASS | delay sync=1/4 mode=PING-PONG: L@24052 R@48053 L@72053, spacing 24001/24000 (expect 24000), fixed engine latency 52 samples; successive same-side tap ratio -11.89 dB
-RESULT PASS | delay sync=1/8 D mode=STEREO: L@18052 L@36053, spacing 18001 (expect 18000), fixed engine latency 52 samples; successive same-side tap ratio -6.14 dB
-RESULT PASS | saturation drive 12 dB, 5000 Hz -12 dBFS: worst alias -136.6 dBc (4x OS) vs -66.5 dBc naive tanh; in-band THD -24.7 dB
-RESULT PASS | saturation drive 12 dB, 9000 Hz -12 dBFS: worst alias -139.2 dBc (4x OS) vs -45.1 dBc naive tanh; in-band THD -31.5 dB
-RESULT PASS | saturation drive 6 dB, 9000 Hz -6 dBFS: worst alias -143.3 dBc (4x OS) vs -45.1 dBc naive tanh; in-band THD -31.5 dB
-RESULT INFO | saturation EXTREME corner (informational): drive 24 dB, 9000 Hz -6 dBFS: worst alias -47.3 dBc (4x OS) vs -17.6 dBc naive tanh
-RESULT INFO | saturation EXTREME corner (informational): drive 24 dB, 13000 Hz -6 dBFS: worst alias -32.7 dBc (4x OS) vs -10.0 dBc naive tanh
-RESULT PASS | TPDF dither (aligned for 52-sample latency): error mean 0.0002 LSB, rms 0.526 LSB (theory 0.500), L/R correlation 0.0015, |e| <= 2 LSB: yes
+RESULT PASS | reverb decay 1.0 s: measured RT60 0.96 s (3.8 % off), L/R tail correlation -0.015, first output 30.0 ms (pre-delay 20 ms)
+RESULT PASS | reverb decay 2.2 s: measured RT60 2.02 s (8.1 % off), L/R tail correlation -0.010, first output 30.0 ms (pre-delay 20 ms)
+RESULT PASS | reverb decay 6.0 s: measured RT60 5.17 s (13.8 % off), L/R tail correlation -0.006, first output 30.0 ms (pre-delay 20 ms)
+RESULT PASS | delay sync=FREE mode=STEREO: L@12049 L@24050, spacing 12001 (expect 12000), fixed engine latency 49 samples; successive same-side tap ratio -6.14 dB
+RESULT PASS | delay sync=FREE mode=PING-PONG: L@12049 R@24050 L@36050, spacing 12001/12000 (expect 12000), fixed engine latency 49 samples; successive same-side tap ratio -11.89 dB
+RESULT PASS | delay sync=1/4 mode=PING-PONG: L@24049 R@48050 L@72050, spacing 24001/24000 (expect 24000), fixed engine latency 49 samples; successive same-side tap ratio -11.89 dB
+RESULT PASS | delay sync=1/8 D mode=STEREO: L@18049 L@36050, spacing 18001 (expect 18000), fixed engine latency 49 samples; successive same-side tap ratio -6.14 dB
+RESULT PASS | saturation drive 12 dB, 5000 Hz -12 dBFS: worst alias -137.8 dBc (2x OS) vs -66.5 dBc naive tanh; in-band THD -24.7 dB
+RESULT PASS | saturation drive 12 dB, 9000 Hz -12 dBFS: worst alias -142.3 dBc (2x OS) vs -45.1 dBc naive tanh; in-band THD -31.5 dB
+RESULT PASS | saturation drive 6 dB, 9000 Hz -6 dBFS: worst alias -142.0 dBc (2x OS) vs -45.1 dBc naive tanh; in-band THD -31.5 dB
+RESULT PASS | saturation drive 12 dB, 13000 Hz -12 dBFS: worst alias -81.0 dBc (2x OS) vs -23.5 dBc naive tanh; in-band THD -240.0 dB
+RESULT INFO | saturation EXTREME corner (informational): drive 24 dB, 9000 Hz -6 dBFS: worst alias -22.0 dBc (2x OS) vs -17.6 dBc naive tanh
+RESULT INFO | saturation EXTREME corner (informational): drive 24 dB, 13000 Hz -6 dBFS: worst alias -18.7 dBc (2x OS) vs -10.0 dBc naive tanh
+RESULT PASS | TPDF dither (aligned for 49-sample latency): error mean -0.0001 LSB, rms 0.526 LSB (theory 0.500), L/R correlation 0.0001, |e| <= 2 LSB: yes
 RESULT PASS | record path at unity gain (STEREO): 0 mismatching samples of 96000 (bit-exact)
-RESULT PASS | DAC path at unity, flat chain, 24-bit input: error rms 0 LSB over 383896 samples (bit-perfect)
-RESULT PASS | click test: 78 parameters stepped def->max->min->def under a 1 kHz+100 Hz tone; worst 1 ms HF spike 3.29 dB over its neighbourhood (sat.drive, max->min), limit 6 dB
+RESULT PASS | DAC path at unity, flat chain, 24-bit input: error rms 0 LSB over 383902 samples (bit-perfect)
+RESULT PASS | click test: 78 parameters stepped def->max->min->def under a 1 kHz+100 Hz tone; worst 1 ms HF spike 3.15 dB over its neighbourhood (sat.drive, max->min), limit 6 dB
 CLICK preset->INIT 0.00
 CLICK preset->ENSEMBLE 0.00
 CLICK preset->DEEP SPACE 0.00
@@ -37,14 +38,14 @@ CLICK preset->TAPE ECHO 0.00
 CLICK preset->WARMTH 0.00
 CLICK soft-mute 0.00 (silent=1)
 RESULT PASS | preset crossfades: worst 1 ms HF spike 0.0 dB over its +-10 ms neighbourhood (limit 6 dB); soft mute 0.0 dB, reaches digital silence: yes
-BENCH realtime_factor 70.0 ns_per_frame 297.8
-BENCHSTAGE INPUT 3.0
-BENCHSTAGE EQ 1.1
-BENCHSTAGE SAT 39.2
-BENCHSTAGE CHORUS 15.1
-BENCHSTAGE DELAY 5.2
-BENCHSTAGE REVERB 16.2
-BENCHSTAGE COMP 9.3
-BENCHSTAGE OUTPUT 2.4
-BENCHSTAGE DITHER 8.5
-RESULT PASS | host benchmark (x86, informational): full chain incl. all effects runs 70x realtime (298 ns/frame)
+BENCH realtime_factor 103.7 ns_per_frame 200.9
+BENCHSTAGE INPUT 4.3
+BENCHSTAGE EQ 1.7
+BENCHSTAGE SAT 23.3
+BENCHSTAGE CHORUS 9.8
+BENCHSTAGE DELAY 7.5
+BENCHSTAGE REVERB 23.4
+BENCHSTAGE COMP 13.7
+BENCHSTAGE OUTPUT 3.5
+BENCHSTAGE DITHER 12.8
+RESULT PASS | host benchmark (x86, informational): full chain incl. all effects runs 104x realtime (201 ns/frame)

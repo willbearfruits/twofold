@@ -1,7 +1,7 @@
 /*
  * dsp_sat.h: 4x oversampled stereo saturation ("warmth").
  *
- *  x -> pre-emphasis(TONE) -> x DRIVE -> up 2x (HB1) -> up 2x (HB2)                         [192 kHz]
+ *  x -> pre-emphasis(TONE) -> x DRIVE -> up 2x (HB1) [-> up 2x (HB2) when SAT_OS == 4]      [96 or 192 kHz]
  *    -> shaper (odd C3 polynomial + even "warmth" term) -> DC block -> wet tilt(TONE)
  *    -> MIX inside the oversampled domain: y = c_wet * shaped + c_dry * x_os   (phase coherent)
  *    -> down (HB2) -> down (HB1) -> de-emphasis (exact inverse of the pre-emphasis)          [48 kHz]
@@ -26,8 +26,23 @@
 #include "dsp_smooth.h"
 #include "dsp_port.h"
 
-#define SAT_LATENCY   5                /* samples @48k, constant (also while bypassed: no time jumps) */
+#if __has_include("sdkconfig.h")
+#include "sdkconfig.h"
+#endif
+#ifndef SAT_OS
+#if defined(CONFIG_TWOFOLD_SAT_OS_4)
 #define SAT_OS        4
+#else
+#define SAT_OS        2              /* default: see the Kconfig help (CPU budget vs. extreme-drive aliasing) */
+#endif
+#endif
+/* Dry-path delay matching the oversampling chain's LF delay (measured: 3.36 samples at 4x, 2.23 at 2x), so the
+ * on/off crossfade does not comb. Constant also while bypassed: no time jumps. */
+#if SAT_OS == 4
+#define SAT_LATENCY   3
+#else
+#define SAT_LATENCY   2
+#endif
 #define SAT_X0        2.1875f
 #define SAT_WARM_MAX  0.25f
 #define SAT_COMP_N    25               /* comp table: 0..24 dB in 1 dB steps */

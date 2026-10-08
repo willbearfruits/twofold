@@ -39,6 +39,8 @@ extern const char *const dsp_stage_names[DSP_ST_COUNT];   /* "INPUT","EQ","SAT",
 typedef struct {
     void *(*alloc_fast)(size_t bytes);   /* internal RAM: reverb tank, chorus, state   */
     void *(*alloc_big)(size_t bytes);    /* PSRAM: delay lines, pre-delay (sequential)  */
+    void *(*alloc_hot)(size_t bytes);    /* internal RAM, always (random access every sample: chorus lines).
+                                          * Optional: NULL = use alloc_fast. */
 } dsp_alloc_t;
 
 /* Allocates everything once (call at boot, before radios). Returns 0 on success. */

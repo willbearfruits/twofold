@@ -29,7 +29,7 @@ CLICKWORST eq.b5.freq 0.00 def->max
 CLICKWORST eq.b5.gain 0.00 def->max
 CLICKWORST eq.b5.q 0.00 def->max
 CLICKWORST sat.on 0.00 def->max
-CLICKWORST sat.drive 3.29 max->min
+CLICKWORST sat.drive 3.15 max->min
 CLICKWORST sat.warmth 0.00 def->max
 CLICKWORST sat.tone 0.00 def->max
 CLICKWORST sat.mix 0.00 def->max

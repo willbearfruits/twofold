@@ -14,6 +14,7 @@
 #include "dsp_engine.h"
 #include "params.h"
 #include "rbj.h"
+#include "dsp_sat.h"   /* SAT_OS */
 
 #define FS 48000
 #define BLK 32
@@ -29,7 +30,7 @@ static int g_fail;
                              if (!(ok)) g_fail = 1; } while (0)
 
 static void *xalloc(size_t n) { void *p = calloc(1, n); if (!p) { perror("calloc"); exit(2); } return p; }
-static const dsp_alloc_t k_alloc = { xalloc, xalloc };
+static const dsp_alloc_t k_alloc = { xalloc, xalloc, xalloc };
 
 /* Studio-neutral baseline: unity volume, all effects off, flat EQ, limiter as given. */
 static void base_params(bool limiter)
@@ -379,12 +380,12 @@ static int test_sat_alias(double f0, float drive, float level_db)
     /* criterion: musical settings (<= 12 dB drive) must keep aliases below -80 dBc; the extreme corner
      * (max drive on a loud HF sine) must still be >= 25 dB better than naive (non-oversampled) saturation */
     if (drive > 12.f) {
-        printf("RESULT INFO | saturation EXTREME corner (informational): drive %.0f dB, %.0f Hz %.0f dBFS: worst alias %.1f dBc (4x OS) vs %.1f dBc naive tanh\n",
-               drive, f0, level_db, alias_db, nalias);
+        printf("RESULT INFO | saturation EXTREME corner (informational): drive %.0f dB, %.0f Hz %.0f dBFS: worst alias %.1f dBc (%dx OS) vs %.1f dBc naive tanh\n",
+               drive, f0, level_db, alias_db, SAT_OS, nalias);
         return 0;
     }
-    RESULT(alias_db <= -80.0, "saturation drive %.0f dB, %.0f Hz %.0f dBFS: worst alias %.1f dBc (4x OS) vs %.1f dBc naive tanh; in-band THD %.1f dB",
-           drive, f0, level_db, alias_db, nalias, thd);
+    RESULT(alias_db <= -80.0, "saturation drive %.0f dB, %.0f Hz %.0f dBFS: worst alias %.1f dBc (%dx OS) vs %.1f dBc naive tanh; in-band THD %.1f dB",
+           drive, f0, level_db, alias_db, SAT_OS, nalias, thd);
     return 0;
 }
 

@@ -22,7 +22,7 @@ static inline uint32_t dsp_cycles(void) { return 0; }
 #endif
 
 /* Sub-stage cycle accounting for on-device profiling (read + reset via dsp_engine_get_dbg). */
-#define DSP_DBG_N 12
+#define DSP_DBG_N 20
 extern uint32_t g_dsp_dbg[DSP_DBG_N];
 #define DSP_DBG_ADD(i, since) (g_dsp_dbg[(i)] += dsp_cycles() - (since))
 

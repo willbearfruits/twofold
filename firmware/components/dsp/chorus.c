@@ -27,11 +27,11 @@ static const cho_cfg_t k_cfg[CHO_MODES] = {
                        { { 1.0f, 1.0f }, { 0.f, 0.f }, { 0.f, 0.f } },               1.0f,  1, true },
 };
 
-int cho_init(dsp_chorus_t *c, void *(*alloc_fast)(size_t))
+int cho_init(dsp_chorus_t *c, void *(*alloc_hot)(size_t))
 {
     memset(c, 0, sizeof *c);
     for (int ch = 0; ch < 2; ch++) {
-        c->line[ch] = (float *)alloc_fast(CHO_LEN * sizeof(float));
+        c->line[ch] = (float *)alloc_hot(CHO_LEN * sizeof(float));
         if (!c->line[ch]) return -1;
     }
     c->rng = 0x9e3779b9u;
@@ -45,10 +45,10 @@ int cho_init(dsp_chorus_t *c, void *(*alloc_fast)(size_t))
     return 0;
 }
 
-static void delays_now(dsp_chorus_t *c, float out[CHO_MODES][3][2])
+static void delays_mode(dsp_chorus_t *c, int m, float out[CHO_MODES][3][2])
 {
     const float depth = c->depth.cur * 0.01f;
-    for (int m = 0; m < CHO_MODES; m++) {
+    {
         const cho_cfg_t *k = &k_cfg[m];
         for (int v = 0; v < 3; v++) {
             for (int ch = 0; ch < 2; ch++) {
@@ -60,6 +60,11 @@ static void delays_now(dsp_chorus_t *c, float out[CHO_MODES][3][2])
             }
         }
     }
+}
+
+static void delays_now(dsp_chorus_t *c, float out[CHO_MODES][3][2])
+{
+    for (int m = 0; m < CHO_MODES; m++) delays_mode(c, m, out);
 }
 
 void cho_reset(dsp_chorus_t *c)
@@ -97,22 +102,43 @@ static DSP_HOT void render(const dsp_chorus_t *c, int mode, const float dnew[CHO
                            float *wl, float *wr, int n, float inv_n)
 {
     const cho_cfg_t *k = &k_cfg[mode];
+    const float *bm = c->line[0], *bs = c->line[1];
+    const float base = (float)(c->w + CHO_LEN);
     for (int v = 0; v < k->nv; v++) {
-        for (int ch = 0; ch < 2; ch++) {
-            const float g = k->pan[v][ch] * k->wet_gain;
-            const float *buf = c->line[ch];
-            float *out = ch ? wr : wl;
-            float d = c->dprev[mode][v][ch];
-            const float dd = (dnew[mode][v][ch] - d) * inv_n;
-            const int base = c->w + CHO_LEN;
+        /* Read position = (w + CHO_LEN + i) - d, kept as integer index + fraction and advanced by (1 - dd) per
+         * sample (no float<->int conversion per sample); |dd| < 1, so one carry per step suffices. */
+        const float dl0 = c->dprev[mode][v][0], ddl = (dnew[mode][v][0] - dl0) * inv_n;
+        const float pl0 = base - (dl0 + ddl);
+        int il = (int)pl0;
+        float tl = pl0 - (float)il;
+        if (!k->wet_only) {
+            /* chorus / ensemble: mono in, one tap per voice on the mid line, panned (Juno / string-ensemble style) */
+            const float gl = k->pan[v][0] * k->wet_gain, gr = k->pan[v][1] * k->wet_gain;
             for (int i = 0; i < n; i++) {
-                d += dd;
-                const float pos = (float)(base + i) - d;      /* > 0, < 2^24: exact integer part */
-                const int ip = (int)pos;
-                const float t = pos - (float)ip;
-                const float xm1 = buf[(ip - 1) & CHO_MASK], x0 = buf[ip & CHO_MASK];
-                const float x1 = buf[(ip + 1) & CHO_MASK], x2 = buf[(ip + 2) & CHO_MASK];
-                out[i] += g * dsp_hermite(xm1, x0, x1, x2, t);
+                const float y = dsp_hermite(bm[(il - 1) & CHO_MASK], bm[il & CHO_MASK], bm[(il + 1) & CHO_MASK],
+                                            bm[(il + 2) & CHO_MASK], tl);
+                wl[i] += gl * y;
+                wr[i] += gr * y;
+                tl -= ddl; il++;
+                if (tl < 0.f) { tl += 1.f; il--; } else if (tl >= 1.f) { tl -= 1.f; il++; }
+            }
+        } else {
+            /* vibrato: stays stereo. L = M + S read at the left delay, R = M - S at the right delay. */
+            const float dr0 = c->dprev[mode][v][1], ddr = (dnew[mode][v][1] - dr0) * inv_n;
+            const float pr0 = base - (dr0 + ddr);
+            int ir = (int)pr0;
+            float tr = pr0 - (float)ir;
+            const float gl = k->pan[v][0] * k->wet_gain, gr = k->pan[v][1] * k->wet_gain;
+            for (int i = 0; i < n; i++) {
+                const int l0 = il & CHO_MASK, l1 = (il - 1) & CHO_MASK, l2 = (il + 1) & CHO_MASK, l3 = (il + 2) & CHO_MASK;
+                const int r0 = ir & CHO_MASK, r1 = (ir - 1) & CHO_MASK, r2 = (ir + 1) & CHO_MASK, r3 = (ir + 2) & CHO_MASK;
+                const float yl = dsp_hermite(bm[l1] + bs[l1], bm[l0] + bs[l0], bm[l2] + bs[l2], bm[l3] + bs[l3], tl);
+                const float yr = dsp_hermite(bm[r1] - bs[r1], bm[r0] - bs[r0], bm[r2] - bs[r2], bm[r3] - bs[r3], tr);
+                wl[i] += gl * yl;
+                wr[i] += gr * yr;
+                tl -= ddl; tr -= ddr; il++; ir++;
+                if (tl < 0.f) { tl += 1.f; il--; } else if (tl >= 1.f) { tl -= 1.f; il++; }
+                if (tr < 0.f) { tr += 1.f; ir--; } else if (tr >= 1.f) { tr -= 1.f; ir++; }
             }
         }
     }
@@ -122,8 +148,8 @@ static void write_line(dsp_chorus_t *c, const float *L, const float *R, int n)
 {
     int w = c->w;
     for (int i = 0; i < n; i++) {
-        c->line[0][w] = L[i];
-        c->line[1][w] = R[i];
+        c->line[0][w] = 0.5f * (L[i] + R[i]);       /* mid  */
+        c->line[1][w] = 0.5f * (L[i] - R[i]);       /* side */
         w = (w + 1) & CHO_MASK;
     }
     c->w = w;
@@ -140,6 +166,7 @@ static void mode_gains(int mode, float f, float mix, float *dg, float *wg)
 
 DSP_HOT void cho_process(dsp_chorus_t *c, float *L, float *R, const dsp_blk_t *b)
 {
+    uint32_t tq = dsp_cycles();
     const int n = b->n;
     /* LFOs and drift (block rate) */
     const float rate = sm_step(&c->rate, b->k);
@@ -158,7 +185,19 @@ DSP_HOT void cho_process(dsp_chorus_t *c, float *L, float *R, const dsp_blk_t *b
     }
     for (int v = 0; v < 3; v++) c->viz_phase[v] = dsp_wrap01(c->ph + (float)v * (1.f / 3.f));
     float dnew[CHO_MODES][3][2];
-    delays_now(c, dnew);
+    memcpy(dnew, c->dprev, sizeof dnew);            /* untouched modes keep their last delays */
+    uint8_t mask;
+    if (!cho_active(c)) { delays_now(c, dnew); mask = (uint8_t)((1u << CHO_MODES) - 1u); }   /* idle: all current */
+    else {
+        delays_mode(c, c->mode, dnew);
+        mask = (uint8_t)(1u << c->mode);
+        if (c->xf < 1.f && c->from_mode != c->mode) { delays_mode(c, c->from_mode, dnew); mask |= (uint8_t)(1u << c->from_mode); }
+    }
+    /* a mode that was not computed last block starts from its current delays (no sweep from stale values) */
+    for (int m = 0; m < CHO_MODES; m++)
+        if ((mask & (1u << m)) && !(c->dmask & (1u << m))) memcpy(c->dprev[m], dnew[m], sizeof dnew[m]);
+    c->dmask = mask;
+    DSP_DBG_ADD(9, tq); tq = dsp_cycles();
 
     if (!cho_active(c)) {
         write_line(c, L, R, n);
@@ -178,6 +217,7 @@ DSP_HOT void cho_process(dsp_chorus_t *c, float *L, float *R, const dsp_blk_t *b
         memset(wl, 0, (size_t)n * sizeof(float));
         memset(wr, 0, (size_t)n * sizeof(float));
         render(c, c->mode, (const float (*)[3][2])dnew, wl, wr, n, b->inv_n);
+        DSP_DBG_ADD(10, tq); tq = dsp_cycles();
         write_line(c, L, R, n);                         /* reads above only touched older samples */
         mode_gains(c->mode, f0, m0, &dg0, &wg0);
         mode_gains(c->mode, f1, m1, &dg1, &wg1);
@@ -215,5 +255,6 @@ DSP_HOT void cho_process(dsp_chorus_t *c, float *L, float *R, const dsp_blk_t *b
         }
         c->xf = x;
     }
+    DSP_DBG_ADD(12, tq);
     memcpy(c->dprev, dnew, sizeof dnew);
 }

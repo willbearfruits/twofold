@@ -1,0 +1,17 @@
+menu "TWOFOLD DSP"
+
+    choice TWOFOLD_SAT_OS
+        prompt "Saturation oversampling"
+        default TWOFOLD_SAT_OS_2
+        help
+            2x keeps aliasing below -138 dBc at musical drive (<= 12 dB) and costs ~13 % less CPU; with every effect
+            on the chain then stays under 60 % of a core. 4x is cleaner only at extreme drive on loud HF content
+            (-33..-47 dBc instead of -19..-22 dBc at 24 dB drive on a -6 dBFS 9-13 kHz sine), at ~+13 % CPU.
+            See docs/test-results/dsp_tests.md.
+        config TWOFOLD_SAT_OS_2
+            bool "2x (96 kHz)"
+        config TWOFOLD_SAT_OS_4
+            bool "4x (192 kHz)"
+    endchoice
+
+endmenu

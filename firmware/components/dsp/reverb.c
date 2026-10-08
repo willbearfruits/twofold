@@ -161,6 +161,7 @@ static DSP_HOT void map_block(dsp_dline_t *l, float g, float d0, float d1, float
 
 DSP_HOT void rev_process(dsp_reverb_t *r, float *L, float *R, const dsp_blk_t *b)
 {
+    uint32_t tq = dsp_cycles();
     const int n = b->n;
     if (!r->running) {
         if (r->on.tgt == 0.f) {
@@ -226,8 +227,9 @@ DSP_HOT void rev_process(dsp_reverb_t *r, float *L, float *R, const dsp_blk_t *b
     r->locut.z1[0] = dsp_flush(r->locut.z1[0]); r->locut.z2[0] = dsp_flush(r->locut.z2[0]);
     for (int i = 0; i < n; i++) x[i] += DSP_TINY;
 
+    DSP_DBG_ADD(13, tq); tq = dsp_cycles();
     /* ---- 48 kHz -> 24 kHz (tank rate); m = tank samples this block ---- */
-    float xin[DSP_BLOCK_MAX + 2], xd[DSP_BLOCK_MAX / 2 + 2], xscr[DSP_BLOCK_MAX / 2 + 2];
+    float xin[DSP_BLOCK_MAX + 2], xd[DSP_BLOCK_MAX / 2 + 2];
     int nin = 0;
     if (r->has_pend) xin[nin++] = r->pend;
     memcpy(xin + nin, x, (size_t)n * sizeof(float));
@@ -235,12 +237,13 @@ DSP_HOT void rev_process(dsp_reverb_t *r, float *L, float *R, const dsp_blk_t *b
     const int m = nin >> 1;
     r->has_pend = nin & 1;
     if (r->has_pend) r->pend = xin[nin - 1];
-    hb1_down(&r->dn, xin, xin, xd, xscr /* second channel unused */, m);
+    hb1_down_mono(&r->dn, xin, xd, m);
     const float inv_m = m ? 1.f / (float)m : 0.f;
 
     /* input diffusers */
     for (int k = 0; k < 4; k++) ap_block(&r->ln[RV_DIF1 + k], k_dif_g[k], xd, m);
 
+    DSP_DBG_ADD(14, tq); tq = dsp_cycles();
     /* ---- output taps (read before this block's tank writes: offsets >= 195 > m) ---- */
     float wl[DSP_BLOCK_MAX], wr[DSP_BLOCK_MAX], tmp[DSP_BLOCK_MAX];   /* tank-rate taps (m samples) */
     for (int c = 0; c < 2; c++) {
@@ -254,6 +257,7 @@ DSP_HOT void rev_process(dsp_reverb_t *r, float *L, float *R, const dsp_blk_t *b
         }
     }
 
+    DSP_DBG_ADD(15, tq); tq = dsp_cycles();
     /* ---- tank ---- */
     float lend[DSP_BLOCK_MAX], rend[DSP_BLOCK_MAX];
     dl_read(&r->ln[RV_LD2], r->ln[RV_LD2].len, lend, m);
@@ -286,6 +290,7 @@ DSP_HOT void rev_process(dsp_reverb_t *r, float *L, float *R, const dsp_blk_t *b
     /* d2 lines: their outputs (lend/rend) were read at the start of the block, before these writes, so the
      * delay is exactly `len` (a dl_read at delay == len returns the samples written `len` samples ago). */
 
+    DSP_DBG_ADD(16, tq); tq = dsp_cycles();
     /* ---- 24 kHz -> 48 kHz: queue (0..1 carried samples) + 2m new samples, emit exactly n ---- */
     {
         float uL[DSP_BLOCK_MAX + 4], uR[DSP_BLOCK_MAX + 4];
@@ -299,6 +304,7 @@ DSP_HOT void rev_process(dsp_reverb_t *r, float *L, float *R, const dsp_blk_t *b
         if (r->oq_n) { r->oq[0] = uL[n]; r->oq[1] = uR[n]; }
     }
 
+    DSP_DBG_ADD(17, tq); tq = dsp_cycles();
     /* ---- width, energy, dry/wet ---- */
     const dsp_ramp_t wd = sm_ramp(&r->width, b);
     const float m0 = r->mix.cur, m1 = sm_step(&r->mix, b->k);
@@ -318,5 +324,6 @@ DSP_HOT void rev_process(dsp_reverb_t *r, float *L, float *R, const dsp_blk_t *b
     }
     r->energy += 0.05f * (e * 0.5f * b->inv_n - r->energy);
     if (pk < QUIET_LIN) r->quiet += n; else r->quiet = 0;
+    DSP_DBG_ADD(18, tq);
     if (r->on.tgt == 0.f && r->on.v == 0.f && r->quiet > DSP_FS) r->running = false;
 }

@@ -205,18 +205,26 @@ DSP_HOT void sat_process(dsp_sat_t *s, float *L, float *R, const dsp_blk_t *b)
         float g = g0;
         for (int i = 0; i < n; i++) { g += dg; xL[i] *= g; xR[i] *= g; }
     }
-    /* up 4x */
-    float aL[2 * DSP_BLOCK_MAX], aR[2 * DSP_BLOCK_MAX], oL[4 * DSP_BLOCK_MAX], oR[4 * DSP_BLOCK_MAX];
+    /* up SAT_OS x */
+#if SAT_OS == 4
+    float aL[2 * DSP_BLOCK_MAX], aR[2 * DSP_BLOCK_MAX];
+#endif
+    float oL[SAT_OS * DSP_BLOCK_MAX], oR[SAT_OS * DSP_BLOCK_MAX];
     uint32_t td = dsp_cycles();
+#if SAT_OS == 4
     hb1_up(&s->up1, xL, xR, aL, aR, n);
     DSP_DBG_ADD(0, td); td = dsp_cycles();
     hb2_up(&s->up2, aL, aR, oL, oR, 2 * n);
     DSP_DBG_ADD(1, td); td = dsp_cycles();
+#else
+    hb1_up(&s->up1, xL, xR, oL, oR, n);
+    DSP_DBG_ADD(0, td); td = dsp_cycles();
+#endif
 
-    /* 192 kHz: shape, DC block, wet tilt, in-domain mix */
+    /* oversampled domain (SAT_OS x 48 kHz): shape, DC block, wet tilt, in-domain mix */
     {
-        const int m = 4 * n;
-        const float inv_m = 0.25f * b->inv_n;
+        const int m = SAT_OS * n;
+        const float inv_m = b->inv_n * (1.f / (float)SAT_OS);
         const float dw = (w1 - w0) * inv_m, dcw = (cw1 - cw0) * inv_m, dcd = (cd1 - cd0) * inv_m;
         float w = w0, cw = cw0, cd = cd0;
         const float r = s->r_dc;
@@ -227,31 +235,51 @@ DSP_HOT void sat_process(dsp_sat_t *s, float *L, float *R, const dsp_blk_t *b)
         float ta1 = tone_moving ? tilt0.a1 : s->tilt.a1;
         const float dtb0 = (s->tilt.b0 - tb0) * inv_m, dtb1 = (s->tilt.b1 - tb1) * inv_m, dta1 = (s->tilt.a1 - ta1) * inv_m;
         float tzl = s->tilt.z[0], tzr = s->tilt.z[1];
-        for (int j = 0; j < m; j++) {
-            w += dw; cw += dcw; cd += dcd;
-            const float ul = oL[j], ur = oR[j];
-            float sl = sat_shape(ul, w), sr = sat_shape(ur, w);
-            /* DC blocker y = x + z; z = r y - x */
-            const float hl = sl + dzl, hr = sr + dzr;
-            dzl = r * hl - sl; dzr = r * hr - sr;
-            sl = hl; sr = hr;
-            if (tilt) {
-                tb0 += dtb0; tb1 += dtb1; ta1 += dta1;
-                const float yl = tb0 * sl + tzl, yr = tb0 * sr + tzr;
-                tzl = tb1 * sl - ta1 * yl; tzr = tb1 * sr - ta1 * yr;
-                sl = yl; sr = yr;
+        /* Two passes per 64-frame chunk: the shaper (independent per sample, unrolled so several evaluations are
+         * in flight on the in-order FPU), then the recursive DC blocker / tilt and the in-domain mix. */
+        float shL[64], shR[64];
+        for (int j0 = 0; j0 < m; j0 += 64) {
+            const int mc = m - j0 < 64 ? m - j0 : 64;
+            const float *uL = oL + j0, *uR = oR + j0;
+            float wj = w;
+            int j = 0;
+            for (; j + 1 < mc; j += 2) {
+                const float wa = wj + dw, wb = wj + 2.f * dw;
+                wj = wb;
+                shL[j] = sat_shape(uL[j], wa);         shR[j] = sat_shape(uR[j], wa);
+                shL[j + 1] = sat_shape(uL[j + 1], wb); shR[j + 1] = sat_shape(uR[j + 1], wb);
             }
-            oL[j] = cw * sl + cd * ul;
-            oR[j] = cw * sr + cd * ur;
+            for (; j < mc; j++) { wj += dw; shL[j] = sat_shape(uL[j], wj); shR[j] = sat_shape(uR[j], wj); }
+            w = wj;
+            for (j = 0; j < mc; j++) {
+                cw += dcw; cd += dcd;
+                float sl = shL[j], sr = shR[j];
+                /* DC blocker y = x + z; z = r y - x */
+                const float hl = sl + dzl, hr = sr + dzr;
+                dzl = r * hl - sl; dzr = r * hr - sr;
+                sl = hl; sr = hr;
+                if (tilt) {
+                    tb0 += dtb0; tb1 += dtb1; ta1 += dta1;
+                    const float yl = tb0 * sl + tzl, yr = tb0 * sr + tzr;
+                    tzl = tb1 * sl - ta1 * yl; tzr = tb1 * sr - ta1 * yr;
+                    sl = yl; sr = yr;
+                }
+                oL[j0 + j] = cw * sl + cd * uL[j];
+                oR[j0 + j] = cw * sr + cd * uR[j];
+            }
         }
         s->dc.z[0] = dsp_flush(dzl); s->dc.z[1] = dsp_flush(dzr);
         s->tilt.z[0] = dsp_flush(tzl); s->tilt.z[1] = dsp_flush(tzr);
     }
     /* down 4x */
     DSP_DBG_ADD(2, td); td = dsp_cycles();
+#if SAT_OS == 4
     hb2_down(&s->dn2, oL, oR, aL, aR, 2 * n);
     DSP_DBG_ADD(3, td); td = dsp_cycles();
     hb1_down(&s->dn1, aL, aR, xL, xR, n);
+#else
+    hb1_down(&s->dn1, oL, oR, xL, xR, n);
+#endif
     DSP_DBG_ADD(4, td);
     if (tone_act) {
         if (tone_moving) fo_run2_ramp(&s->de, &de0, xL, xR, n, b->inv_n);

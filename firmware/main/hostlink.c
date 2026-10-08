@@ -3,6 +3,9 @@
  *
  *   F0 7D 01 F7               -> F0 7D 02 <ascii crash report> F7           (tools/crash_report.sh)
  *   F0 7D 03 F7               -> F0 7D 04 <ascii status report> F7          (tools/twofold_status.sh)
+ *   F0 7D 05 F7               -> profile with interrupts masked for 3 s (diagnostic)
+ *   F0 7D 07 F7               -> F0 7D 08 <sub-stage cycles/frame> F7
+ *   F0 7D 09 0x F7 / 0A 0x F7 -> WiFi / BLE off (00) or on (01)
  *   F0 7D 7E 42 4F 4F 54 F7   -> F0 7D 7F F7, then reboot into the ROM download mode ("BOOT"; tools/flash.sh)
  *
  * Runs in the ctrl task (core 0). Replies are plain 7-bit ASCII.
@@ -44,7 +47,9 @@ static unsigned stack_free(const char *name)
 static size_t dbg_report(char *b, size_t n)
 {
     static const char *const nm[DSP_DBG_N] = { "sat.up1", "sat.up2", "sat.shape", "sat.dn2", "sat.dn1", "-", "in.setup",
-                                               "in.conv", "in.rest", "-", "-", "frames" };
+                                               "in.conv", "in.rest", "cho.lfo", "cho.render", "-", "cho.mix",
+                                               "rev.in+pre", "rev.decim+diff", "rev.taps", "rev.tank", "rev.interp",
+                                               "rev.mix", "frames" };
     uint32_t d[DSP_DBG_N];
     dsp_engine_get_dbg(d);
     const double fr = d[DSP_DBG_N - 1] ? (double)d[DSP_DBG_N - 1] : 1.0;
@@ -95,6 +100,8 @@ void usb_midi_sysex_received(const uint8_t *m, size_t len)
     /* m[0] = F0, m[1] = 7D, m[len-1] = F7 */
     if (len == 4 && m[2] == 0x01) { send_text(0x02, crash_report); return; }
     if (len == 4 && m[2] == 0x03) { send_text(0x04, status_report); return; }
+    if (len == 5 && m[2] == 0x09) { sys_cmd(SYS_CMD_WIFI_ENABLE, m[3] ? 1 : 0); return; }   /* radios, for measurements */
+    if (len == 5 && m[2] == 0x0A) { sys_cmd(SYS_CMD_BLE_ENABLE, m[3] ? 1 : 0); return; }
     if (len == 4 && m[2] == 0x07) { send_text(0x08, dbg_report); return; }
     if (len == 4 && m[2] == 0x05) { audio_diag_irqoff(3000); return; }   /* profile with interrupts masked for 3 s */
     if (len == 8 && m[2] == 0x7E && !memcmp(m + 3, "BOOT", 4)) {
