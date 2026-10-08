@@ -423,3 +423,13 @@ So A and B each fit; A+B does not on one S3 (the S3 has no High Speed USB). No n
   in hardware, moderate in firmware; shares I2S1 with variant B unless the DAC2 goes on a third data line of I2S0
   (TDM is not available for the PCM5102A, but I2S0 can still drive one stereo line only, so S/PDIF and DAC2 compete
   for I2S1).
+* (production) **Tester release work.** OTA rollback enabled (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`): a new
+  image is confirmed by `main/ota_confirm.c` only after 20 s of clean audio (blocks flowing, no I2S errors), the
+  otadata write goes under soft-mute in the sys task; no clean audio within 3 min, or a panic, brings the old image
+  back. ctrl task stack 4 → 6 KB (1.4 KB was free). Boot-time counter artifacts removed: DMA overflows between
+  `i2s_channel_enable()` and the first loop iteration (the I2S log line alone took ~10 ms, longer than the 4-block
+  ring) are no longer counted and the log moved before the enable; record drops in the first ~10 ms after a record
+  start (the host polls IN a little after SetInterface) are not counted; DMA overflows within 500 ms of our own
+  flash writes (storage/OTA call `audio_flash_write_hint()`) count as `flash-stall`, not I2S errors. A fresh boot
+  now shows all counters at 0. `tools/release.sh` builds the tester bundle, `docs/QUICKSTART.md` is the one-page
+  guide, `tools/loopback.py --rec-device` measures the DAC path through another interface's line inputs.

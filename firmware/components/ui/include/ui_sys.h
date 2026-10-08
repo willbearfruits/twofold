@@ -44,6 +44,8 @@ typedef struct {
     uint32_t xrun_play;          /* USB OUT FIFO underruns (blocks padded with silence) */
     uint32_t xrun_rec;           /* USB IN FIFO overflows */
     uint32_t i2s_errors;         /* DMA overflow/underflow events */
+    uint32_t tx_late;            /* TX blocks that missed their slot (subset of i2s_errors) */
+    uint32_t stalls_flash;       /* DMA overflows during our own flash writes (expected) */
     int32_t  usb_out_fifo;       /* bytes in TinyUSB OUT FIFO */
     int32_t  usb_in_fifo;
     float    usb_feedback;       /* frames per ms reported to host (e.g. 48.0013) */
@@ -62,6 +64,7 @@ typedef enum {
     SYS_CMD_OLED_TYPE,           /* arg: 0 SSD1306, 1 SH1106 (re-inits display) */
     SYS_CMD_FACTORY_RESET,
     SYS_CMD_REBOOT,
+    SYS_CMD_OTA_CONFIRM,         /* arg: 1 keep the pending OTA image, 0 roll back (ota_confirm.c) */
 } sys_cmd_t;
 
 void  sys_get_status(sys_status_t *s);

@@ -13,7 +13,8 @@ python3 -m pip install --user sounddevice                 # loopback.py on real 
 | tool | what it does | writes |
 |---|---|---|
 | `clock_jitter.py` | ESP32-S3 I2S fractional MCLK divider: IDF 5.5.1 divider math, edge sequence, TIE/jitter spectra, jitter-limited SNR (PLAN.md §4.2) | `docs/clocking/` |
-| `loopback.py` | Loopback measurement suite through the device: latency, FR, THD+N, DR, noise, crosstalk, long-run click/slip test, Studio-vs-WiFi diff report | `tools/loopback_results/` (or `--out`) |
+| `loopback.py` | Loopback measurement suite through the device: latency, FR, THD+N, DR, noise, crosstalk, long-run click/slip test, Studio-vs-WiFi diff report; `--rec-device` measures the DAC path through another interface's line input | `tools/loopback_results/` (or `--out`) |
+| `release.sh` | Builds `dist/twofold-<version>/`: merged full image, OTA image, editor.html, udev rule, QUICKSTART, checksums | `dist/` |
 | `gen_wiring.py` | Wiring tables, power/ground, converter strapping for both clock modes, and ASCII block diagrams, generated from `board_config.h` | `docs/wiring.md` |
 
 ## clock_jitter.py

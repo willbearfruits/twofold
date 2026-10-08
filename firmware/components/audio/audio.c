@@ -67,6 +67,9 @@ static DRAM_ATTR int32_t s_zero[BLOCK_SAMPLES] __attribute__((aligned(16)));
 static DRAM_ATTR volatile uint32_t s_tx_slots;        /* TX DMA slots finished = index of the playing slot */
 static DRAM_ATTR volatile uint32_t s_tx_slot_cc;      /* CCOUNT at the last TX slot boundary (core 1) */
 static DRAM_ATTR volatile uint32_t s_rx_ovf, s_tx_ovf;
+static volatile int64_t s_flash_hint_us = -1000000;
+
+void audio_flash_write_hint(void) { s_flash_hint_us = esp_timer_get_time(); }
 
 /* Stats (written by the audio task only) */
 static volatile audio_stats_t s_st;
@@ -247,10 +250,11 @@ static esp_err_t i2s_setup(void)
 
     /* TX first: RX slot boundaries then trail TX boundaries by a few us, which gives the DSP almost a full
      * block of budget before the next TX slot starts. */
-    if ((err = i2s_channel_enable(s_tx)) != ESP_OK) return err;
-    if ((err = i2s_channel_enable(s_rx)) != ESP_OK) return err;
     ESP_LOGI(TAG, "I2S0 %s, %d Hz, 32-bit slots, MCLK %s, %d x %d frames", BOARD_CLOCK_EXT_OSC ? "SLAVE (ext osc)" : "MASTER",
              BOARD_SAMPLE_RATE, BOARD_CLOCK_EXT_OSC ? "unused" : "256fs on GPIO4", AUDIO_DMA_DESC, AUDIO_BLOCK_FRAMES);
+    /* Logging before enabling: the UART line above takes ~10 ms, longer than the 4-block DMA ring. */
+    if ((err = i2s_channel_enable(s_tx)) != ESP_OK) return err;
+    if ((err = i2s_channel_enable(s_rx)) != ESP_OK) return err;
     return ESP_OK;
 }
 
@@ -267,8 +271,10 @@ static IRAM_ATTR __attribute__((noinline)) void audio_loop(void)
 {
     play_state_t play_state = PLAY_IDLE;
     uint32_t play_gen = usbdev_play_gen(), rec_gen = usbdev_rec_gen();
-    uint32_t w_next = AUDIO_TX_PRELOAD;       /* TX slot index our next write lands in */
-    uint32_t tx_ovf_seen = 0, rx_ovf_seen = 0;
+    /* Overflows between i2s_channel_enable() and this point (boot: task start, logging) are not errors: start
+     * counting from here. If TX already overflowed, the preload is gone and our next write lands in the playing slot. */
+    uint32_t tx_ovf_seen = s_tx_ovf, rx_ovf_seen = s_rx_ovf;
+    uint32_t w_next = tx_ovf_seen ? s_tx_slots : AUDIO_TX_PRELOAD;   /* TX slot index our next write lands in */
     int32_t  lead_target = 0;
     uint32_t good_blocks = 0, late_events = 0;
     uint64_t phase_acc = 0;
@@ -276,6 +282,7 @@ static IRAM_ATTR __attribute__((noinline)) void audio_loop(void)
     int64_t  fs_t0 = esp_timer_get_time();
     uint32_t fs_frames = 0;
     bool     unmuted = false, clock_ok = false;
+    uint32_t rec_grace = 0;                   /* blocks after a record start during which drops don't count */
 
     for (;;) {
         size_t got = 0;
@@ -304,8 +311,10 @@ static IRAM_ATTR __attribute__((noinline)) void audio_loop(void)
 
         /* ---- I2S health: queue overflows mean the task stalled (e.g. flash write with cache off) ---- */
         uint32_t const rx_ovf = s_rx_ovf, tx_ovf = s_tx_ovf;
+        bool const flash_stall = (esp_timer_get_time() - s_flash_hint_us) < 500000;
         if (rx_ovf != rx_ovf_seen) {
-            s_st.i2s_errors += rx_ovf - rx_ovf_seen;
+            if (flash_stall) s_st.stalls_flash += rx_ovf - rx_ovf_seen;
+            else s_st.i2s_errors += rx_ovf - rx_ovf_seen;
             rx_ovf_seen = rx_ovf;
         }
 
@@ -334,6 +343,7 @@ static IRAM_ATTR __attribute__((noinline)) void audio_loop(void)
         if (rg != rec_gen) {
             rec_gen = rg;
             if (rec) {
+                rec_grace = 16;                   /* ~10 ms: the host starts polling IN a little after SetInterface */
                 uint32_t have = usbdev_rec_count(), want = usbdev_rec_target_bytes();
                 while (have + BLOCK_BYTES <= want) {
                     usbdev_rec_write(s_zero, BLOCK_BYTES);
@@ -359,7 +369,8 @@ static IRAM_ATTR __attribute__((noinline)) void audio_loop(void)
         }
         if (rec) {
             if (usbdev_rec_space() >= (uint32_t)BLOCK_BYTES) usbdev_rec_write(s_rec, BLOCK_BYTES);
-            else s_st.xrun_rec++;
+            else if (!rec_grace) s_st.xrun_rec++;
+            if (rec_grace) rec_grace--;
         }
 
         /* ---- TX with latency control ---- */
@@ -367,7 +378,8 @@ static IRAM_ATTR __attribute__((noinline)) void audio_loop(void)
         if (tx_ovf != tx_ovf_seen) {
             /* Free-buffer queue overflowed: IDF dropped the oldest entries; the oldest remaining buffer is the
              * one now playing, so our next write lands in `slot`. */
-            s_st.i2s_errors += tx_ovf - tx_ovf_seen;
+            if (flash_stall) s_st.stalls_flash += tx_ovf - tx_ovf_seen;
+            else s_st.i2s_errors += tx_ovf - tx_ovf_seen;
             tx_ovf_seen = tx_ovf;
             w_next = slot;
         }

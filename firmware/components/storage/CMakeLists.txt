@@ -2,5 +2,5 @@
 idf_component_register(SRCS "storage.c"
                        INCLUDE_DIRS "include"
                        REQUIRES esp_common
-                       PRIV_REQUIRES params dsp usbdev nvs_flash esp_timer heap log freertos)
+                       PRIV_REQUIRES params dsp usbdev audio nvs_flash esp_timer heap log freertos)
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra -Werror -Wno-unused-parameter)

@@ -36,10 +36,14 @@ typedef struct {
     uint32_t xrun_rec;           /* record blocks dropped (USB IN FIFO full) */
     uint32_t i2s_errors;         /* DMA queue overflows (RX/TX) + late TX blocks + read timeouts */
     uint32_t tx_late;            /* TX blocks that missed their slot (subset of i2s_errors) */
+    uint32_t stalls_flash;       /* DMA overflows during our own flash writes (expected, not in i2s_errors) */
     float    measured_fs;        /* I2S frames per second against esp_timer, last 1 s window */
     int8_t   tx_lead;            /* TX blocks queued ahead of the playing one (latency control) */
 } audio_stats_t;
 void audio_get_stats(audio_stats_t *s);
+/* Storage/OTA call this right before writing flash: both cores stall, so DMA overflows in the next 500 ms are
+ * accounted as stalls_flash instead of i2s_errors (they happen in silence or under soft-mute). */
+void audio_flash_write_hint(void);
 /* Diagnostic: run the DSP with interrupts masked for `ms` (profile without interrupt/stall time). */
 void audio_diag_irqoff(uint32_t ms);
 

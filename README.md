@@ -110,6 +110,12 @@ enclosure/check.sh             # enclosure collision checks + STL export
 python3 tools/loopback.py --selftest          # measurement-suite self-test (synthetic device)
 ```
 
+### Releases for testers
+`tools/release.sh [version]` builds `dist/twofold-<version>/`: a merged image for `esptool write_flash 0x0`, the
+app-only OTA image, the editor page for USB use, the udev rule, checksums and [docs/QUICKSTART.md](docs/QUICKSTART.md)
+(the one-page guide for people who get a unit). Tag releases (`git tag -a v1.0.0`) so the version shows in ABOUT and
+`/api/info`.
+
 ## Hands-free flashing, status and crash reports over USB
 `tools/flash.sh` asks the running firmware (USB-MIDI SysEx) to reboot into the ROM download mode, flashes, and starts
 the app again: no BOOT/RST buttons after the first flash. `tools/twofold_status.sh` reads CPU per DSP block, xruns,
@@ -225,13 +231,21 @@ prints the exact internal/PSRAM split.
 * Flash writes stall both CPUs on the S3, so settings are committed only in audio-safe windows (silence / no stream)
   or under a brief soft-mute for explicit saves. Unplugging within ~3 s of a change, while audio is playing, can lose
   that last change.
-* OTA and WiFi credential saves soft-mute the audio while flash is written.
+* OTA and WiFi credential saves soft-mute the audio while flash is written. An OTA image runs on probation
+  (bootloader rollback): it is kept only after 20 s of clean audio, otherwise the previous image returns.
 * The VID is Espressif's (0x303A) with a placeholder PID. A product needs its own PID.
 * OpenSCAD 2021.01 flags the lid STL as possibly non-manifold (coincident faces); slicers repair it on import.
 
+## Production readiness (as of v1.0.0)
+Verified on the SuperMini board: USB audio in/out and MIDI on Linux, 2 h of playback with every counter at 0 (xruns,
+I2S errors), WiFi + BLE together, crash capture, hands-free flashing, OTA with rollback, the host test suite.
+Open before a wider release: Windows and macOS enumeration and listening tests, the loopback measurements (needs the
+line-input ADC), an own USB PID, a printed enclosure. Testers get `tools/release.sh` output and
+[docs/QUICKSTART.md](docs/QUICKSTART.md).
+
 ## Needs real hardware to confirm
-1. Driverless streaming on macOS and Windows 10/11 (Linux verified: 48 kHz/24-bit async in + out, MIDI), and hours-long
-   drift-click-free playback with FIFO_COUNT feedback (`tools/loopback.py --drift`). WebUSB/WinUSB on Windows and macOS.
+1. Driverless streaming on macOS and Windows 10/11 (Linux verified: 48 kHz/24-bit async in + out, MIDI, 2 h with zero
+   xruns), and hours-long drift-click-free playback measured (`tools/loopback.py --drift`). WebUSB/WinUSB on Windows and macOS.
 3. Actual internal heap at boot, and WiFi + BLE enabled together without running out of internal RAM.
 4. Loopback latency, frequency response, THD+N and noise floor, Studio Mode vs WiFi on (`tools/loopback.py`).
 5. PCM1808 slave mode with the PLL-derived MCLK, and low-jitter mode with the PCM1808 as master.

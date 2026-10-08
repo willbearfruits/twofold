@@ -28,6 +28,7 @@
 #include <string.h>
 #include "storage.h"
 #include "params.h"
+#include "audio.h"
 #include "dsp_engine.h"
 #include "usbdev.h"
 #include "nvs.h"
@@ -97,6 +98,7 @@ static void unlock(void) { xSemaphoreGive(s_mtx); }
 /* Soft-mute the DAC + USB record path for the duration of an explicit write. */
 static void mute_begin(void)
 {
+    audio_flash_write_hint();
     dsp_engine_soft_mute(true);
     for (int i = 0; i < SILENCE_TIMEOUT_MS && !dsp_engine_is_silent(); i++) vTaskDelay(1);
 }
@@ -105,6 +107,7 @@ static void mute_end(void) { dsp_engine_soft_mute(false); }
 /* ---- raw writers (caller holds the lock; core 0) ---- */
 static esp_err_t write_settings_locked(void)
 {
+    audio_flash_write_hint();
     size_t n = params_serialize(PF_SETTING, NULL, s_scratch, s_scratch_cap);
     if (!n) return ESP_ERR_INVALID_SIZE;
     return nvs_set_blob(s_nvs, "settings", s_scratch, n);
@@ -112,6 +115,7 @@ static esp_err_t write_settings_locked(void)
 
 static esp_err_t write_cc_locked(void)
 {
+    audio_flash_write_hint();
     size_t n = params_cc_serialize(s_cc_tmp, s_cc_cap);
     if (!n) return ESP_ERR_INVALID_SIZE;
     esp_err_t err = nvs_set_blob(s_nvs, "ccmap", s_cc_tmp, n);

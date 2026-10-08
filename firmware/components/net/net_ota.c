@@ -19,6 +19,7 @@
 #include "esp_ota_ops.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+#include "audio.h"
 #include "dsp_engine.h"
 #include "net_priv.h"
 
@@ -54,6 +55,7 @@ static esp_err_t h_ota(httpd_req_t *req)
 
     s_active = true;
     s_pct = 0;
+    audio_flash_write_hint();
     dsp_engine_soft_mute(true);
     for (int i = 0; i < 40 && !dsp_engine_is_silent(); i++) vTaskDelay(pdMS_TO_TICKS(5));
 

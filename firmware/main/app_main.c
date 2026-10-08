@@ -46,6 +46,7 @@ void app_main(void)
     CHECK(led_init());
     CHECK(ctrl_start());
     CHECK(ui_task_start());
+    ota_confirm_start();         /* after an OTA: keep the image only once audio has streamed cleanly */
 
     /* Studio Mode by default: radios stay off. RESTORE brings back the last WiFi / BLE state. */
     if (params_get_int(P_NET_BOOT) == 1) {

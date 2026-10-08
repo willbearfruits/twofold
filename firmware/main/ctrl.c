@@ -126,6 +126,9 @@ static void sys_task(void *arg)
             ble_midi_enable(false);
             storage_factory_reset();
             break;
+        case SYS_CMD_OTA_CONFIRM:
+            ota_confirm_apply(r.arg != 0);
+            break;
         case SYS_CMD_REBOOT:
             storage_flush_now();
             net_wifi_enable(false);

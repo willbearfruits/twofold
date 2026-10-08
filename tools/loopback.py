@@ -10,6 +10,9 @@ Connect the TWOFOLD line outputs to its line inputs (L->L, R->R) and run:
     python3 tools/loopback.py --compare                 # both runs interactively + report
     python3 tools/loopback.py --drift 120               # 2 h sine, detects clicks / sample slips
     python3 tools/loopback.py --selftest                # no device needed: synthetic verification
+    python3 tools/loopback.py --label dac --rec-device "Scarlett"   # split mode: TWOFOLD out -> another
+                                                        # interface's line in (measures the DAC + USB OUT path
+                                                        # only; latency = device alignment, no drift test)
 
 Measurements (48 kHz, 24-bit samples in int32 containers, duplex stream):
   (a) round-trip latency: MLS (order 15) cross-correlation, sub-sample peak interpolation; repeated
@@ -498,20 +501,25 @@ def import_sounddevice() -> Any:
     return sd
 
 
-def find_device(sd: Any, override: str | None, pattern: str = "twofold") -> int:
-    """Pick the duplex TWOFOLD device; prefer raw ALSA hw: entries. ``override`` = index or substring."""
+def find_device(sd: Any, override: str | None, pattern: str = "twofold", need: str = "duplex") -> int:
+    """Pick a device; prefer raw ALSA hw: entries. ``override`` = index or substring.
+    ``need`` = "duplex" (in and out), "out" or "in" (split mode: TWOFOLD plays, another interface records)."""
     devs = list(sd.query_devices())
     if override is not None:
         if override.isdigit():
             return int(override)
         pattern = override.lower()
+    want_in = need in ("duplex", "in")
+    want_out = need in ("duplex", "out")
     cands = [(i, d) for i, d in enumerate(devs) if pattern in d["name"].lower()
-             and d["max_input_channels"] >= CHANNELS and d["max_output_channels"] >= CHANNELS]
+             and (not want_in or d["max_input_channels"] >= CHANNELS)
+             and (not want_out or d["max_output_channels"] >= CHANNELS)]
     if not cands:
         listing = "\n".join(f"  [{i}] {d['name']}  (in {d['max_input_channels']}, out {d['max_output_channels']})"
                             for i, d in enumerate(devs))
-        sys.exit(f"error: no duplex device matching '{pattern}' found. Devices:\n{listing}\n"
-                 "Use --device <index|name substring>. If the device is busy, stop PipeWire for the session.")
+        sys.exit(f"error: no {need} device matching '{pattern}' found. Devices:\n{listing}\n"
+                 "Use --device/--play-device/--rec-device <index|name substring>. "
+                 "If the device is busy, stop PipeWire for the session.")
     cands.sort(key=lambda c: (0 if "hw:" in c[1]["name"] else 1, c[0]))
     return cands[0][0]
 
@@ -519,21 +527,33 @@ def find_device(sd: Any, override: str | None, pattern: str = "twofold") -> int:
 class SoundDeviceBackend:
     """Real device through python-sounddevice (PortAudio), int32 samples."""
 
-    def __init__(self, device: str | None, fs: int = FS, blocksize: int = 0) -> None:
+    def __init__(self, device: str | None, fs: int = FS, blocksize: int = 0,
+                 play_device: str | None = None, rec_device: str | None = None) -> None:
         self.sd = import_sounddevice()
         self.fs = fs
-        self.dev = find_device(self.sd, device)
-        self.name = self.sd.query_devices(self.dev)["name"]
+        self.split = play_device is not None or rec_device is not None
+        if self.split:
+            # Split mode: the TWOFOLD plays, a second interface (with line inputs) records, or the other way round.
+            # Two clocks, so "latency" is only the alignment between the devices, and the drift test is meaningless.
+            self.dev_out = find_device(self.sd, play_device, need="out")
+            self.dev_in = find_device(self.sd, rec_device, pattern="", need="in") if rec_device else \
+                find_device(self.sd, None, need="in")
+        else:
+            self.dev_out = self.dev_in = find_device(self.sd, device)
+        self.dev = (self.dev_in, self.dev_out)
+        n_out = self.sd.query_devices(self.dev_out)["name"]
+        n_in = self.sd.query_devices(self.dev_in)["name"]
+        self.name = n_out if not self.split else f"play: {n_out} -> rec: {n_in}"
         self.blocksize = blocksize
         try:
-            self.sd.check_output_settings(device=self.dev, channels=CHANNELS, dtype="int32", samplerate=fs)
-            self.sd.check_input_settings(device=self.dev, channels=CHANNELS, dtype="int32", samplerate=fs)
+            self.sd.check_output_settings(device=self.dev_out, channels=CHANNELS, dtype="int32", samplerate=fs)
+            self.sd.check_input_settings(device=self.dev_in, channels=CHANNELS, dtype="int32", samplerate=fs)
         except Exception as e:  # noqa: BLE001 - PortAudio raises a plain PortAudioError
             sys.exit(f"error: device '{self.name}' rejects {fs} Hz / int32 / {CHANNELS} ch: {e}")
 
     def playrec(self, out: np.ndarray) -> np.ndarray:
         rec = self.sd.playrec(float_to_i32(out), samplerate=self.fs, channels=CHANNELS, dtype="int32",
-                              device=(self.dev, self.dev), blocking=True)
+                              device=self.dev, blocking=True)
         return i32_to_float(np.asarray(rec))
 
     def duplex_stream(self, seconds: float, gen: Callable[[int, int], np.ndarray],
@@ -551,7 +571,7 @@ class SoundDeviceBackend:
 
         total = int(seconds * self.fs)
         got, last_print = 0, time.monotonic()
-        with self.sd.Stream(device=(self.dev, self.dev), samplerate=self.fs, channels=CHANNELS, dtype="int32",
+        with self.sd.Stream(device=self.dev, samplerate=self.fs, channels=CHANNELS, dtype="int32",
                             blocksize=self.blocksize, callback=cb):
             while got < total:
                 blk = q.get(timeout=5.0)
@@ -751,9 +771,11 @@ def run_suite(be: Backend, label: str, latency_runs: int = 5, drift_minutes: flo
     fr = measure_fr(be)
     print(f"[{label}] THD+N / DR / noise / crosstalk...", flush=True)
     tones = measure_tones(be, int(round(lat["mean_samples"])))
-    res: dict[str, Any] = {"label": label, "device": be.name, "fs": be.fs,
+    res: dict[str, Any] = {"label": label, "device": be.name, "fs": be.fs, "split": bool(getattr(be, "split", False)),
                            "timestamp": _dt.datetime.now().isoformat(timespec="seconds"),
                            "latency": lat, "fr": fr, "tones": tones}
+    if res["split"]:
+        print(f"[{label}] split mode: the latency figure is only the alignment between two devices, not a round trip")
     if drift_minutes > 0:
         print(f"[{label}] drift / click run ({drift_minutes} min)...", flush=True)
         res["drift"] = measure_drift(be, drift_minutes)
@@ -1089,7 +1111,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                                  epilog=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--selftest", action="store_true", help="synthetic verification, no audio device")
     ap.add_argument("--list-devices", action="store_true", help="list PortAudio devices and exit")
-    ap.add_argument("--device", help="device index or name substring (default: auto-find 'TWOFOLD')")
+    ap.add_argument("--device", help="duplex device index or name substring (default: auto-find 'TWOFOLD')")
+    ap.add_argument("--play-device", help="split mode: play on this device (default 'TWOFOLD') and record on --rec-device")
+    ap.add_argument("--rec-device", help="split mode: record on this device (another interface's line inputs)")
     ap.add_argument("--label", help="run the suite once and save <out>/<label>.json/.md/.png")
     ap.add_argument("--compare", action="store_true", help="interactive: Studio Mode run, then WiFi-on run")
     ap.add_argument("--report", nargs=2, metavar=("A", "B"), help="diff two saved runs (labels or .json paths)")
@@ -1112,7 +1136,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not (args.label or args.compare or args.drift):
         ap.print_help()
         return 2
-    be = SoundDeviceBackend(args.device)
+    be = SoundDeviceBackend(args.device, play_device=args.play_device, rec_device=args.rec_device)
+    if args.drift and be.split:
+        sys.exit("error: the drift test needs one duplex device (two interfaces have two clocks)")
     if args.drift:
         res = measure_drift(be, args.drift)
         lab = args.label or "drift"

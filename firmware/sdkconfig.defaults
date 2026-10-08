@@ -65,3 +65,7 @@ CONFIG_I2S_ISR_IRAM_SAFE=y
 CONFIG_ESP_PHY_CALIBRATION_AND_DATA_STORAGE=n
 # CONFIG_SPI_FLASH_AUTO_SUSPEND stays at its default (off): it only helps on flash chips that support
 # suspend/resume, which the S3-Zero's flash is not guaranteed to do (PLAN.md 13, assumption 8).
+
+# OTA rollback: a new image boots once as "pending verify"; main/ota_confirm.c marks it valid only after USB audio
+# has streamed cleanly for a while. If it never does (crash, hang) the bootloader returns to the previous image.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

@@ -8,7 +8,7 @@
 /* Task table (PLAN.md 3). Core 1 runs only the audio task (components/audio). */
 #define TF_CTRL_CORE     0
 #define TF_CTRL_PRIO     8
-#define TF_CTRL_STACK    4096
+#define TF_CTRL_STACK    6144       /* measured 1.4 KB free at 4096 (SysEx replies, storage) */
 #define TF_CTRL_PERIOD_MS 2
 #define TF_SYS_CORE      0
 #define TF_SYS_PRIO      4
@@ -23,6 +23,9 @@ esp_err_t ctrl_start(void);
 void      ctrl_send_cc(uint8_t cc, uint8_t value);
 /* Queue a slow system command (radios, preset save, factory reset, reboot) for the sys task. */
 void      sys_worker_post(sys_cmd_t cmd, int arg);
+/* ota_confirm.c: OTA rollback health check (no-op unless the running image is pending verification) */
+void      ota_confirm_start(void);
+void      ota_confirm_apply(bool healthy);
 
 /* ui_task.c */
 esp_err_t ui_task_start(void);
