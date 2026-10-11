@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TWOFOLD · a USB sound card with effects inside</title>
+<meta name="description" content="A small USB sound card with an effects rack inside, a little screen and one knob.">
+<meta property="og:title" content="TWOFOLD">
+<meta property="og:description" content="A small USB sound card with an effects rack inside, a little screen and one knob.">
+<meta property="og:image" content="https://willbearfruits.github.io/twofold/img/tour-poster.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:ital,wght@0,400;0,600;1,400&display=swap">
+<style>
+:root{
+  --bg:#e9e8e2; --paper:#f3f2ed; --ink:#151412; --muted:#5f5e57; --rule:#151412; --soft:#cfcdc4;
+  --accent:#d98b1b;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  --sans:"IBM Plex Sans",system-ui,sans-serif;
+  color-scheme:light dark;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){--bg:#141412;--paper:#1c1c19;--ink:#e7e5dc;--muted:#a09e94;--rule:#e7e5dc;--soft:#3a3934}
+}
+:root[data-theme="dark"]{--bg:#141412;--paper:#1c1c19;--ink:#e7e5dc;--muted:#a09e94;--rule:#e7e5dc;--soft:#3a3934}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.6 var(--sans)}
+img,video{max-width:100%;height:auto;display:block}
+a{color:inherit;text-decoration-color:var(--accent);text-underline-offset:3px;text-decoration-thickness:2px}
+a:hover{color:var(--accent)}
+.wrap{max-width:1040px;margin:0 auto;padding:0 16px}
+header.top{border-bottom:1px solid var(--rule);font-family:var(--mono);font-size:13px}
+header.top .wrap{display:flex;gap:16px;align-items:center;justify-content:space-between;min-height:48px;flex-wrap:wrap}
+header.top a{text-decoration:none}
+.brand{font-weight:600;letter-spacing:.12em}
+header.top nav{display:flex;gap:16px;flex-wrap:wrap}
+.hero{padding:48px 0 32px;display:grid;grid-template-columns:1.05fr 1fr;gap:40px;align-items:center}
+.kicker{font-family:var(--mono);font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin:0 0 12px}
+.hero h1{font-family:var(--mono);font-weight:600;font-size:clamp(40px,7vw,72px);letter-spacing:.01em;line-height:.95;margin:0 0 18px}
+.lead{font-size:clamp(19px,2.4vw,22px);line-height:1.45;margin:0 0 12px;max-width:28em}
+.small{color:var(--muted);font-size:15px;margin:0 0 22px}
+.actions{display:flex;flex-wrap:wrap;gap:10px}
+.btn{font-family:var(--mono);font-size:14px;border:1px solid var(--rule);padding:10px 16px;text-decoration:none;background:var(--paper);color:var(--ink);display:inline-block}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.solid{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.btn.solid:hover{background:var(--accent);border-color:var(--accent);color:#fff}
+.frame{border:1px solid var(--rule);background:var(--paper);padding:10px}
+.frame figcaption{font-family:var(--mono);font-size:12px;color:var(--muted);padding-top:8px}
+section{padding:40px 0;border-top:1px solid var(--soft)}
+h2{font-family:var(--mono);font-size:14px;letter-spacing:.14em;text-transform:uppercase;margin:0 0 22px;font-weight:600}
+h2::before{content:"";display:inline-block;width:10px;height:10px;background:var(--accent);margin-right:10px;vertical-align:1px}
+h3{font-family:var(--mono);font-size:17px;margin:0 0 6px;font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:22px}
+.card p{margin:0;color:var(--muted)}
+.card{border-top:2px solid var(--ink);padding-top:12px}
+.shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
+.shots figure{margin:0}
+.get{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px}
+.get .box{border:1px solid var(--rule);background:var(--paper);padding:20px}
+.get .box p{margin:0 0 14px}
+.get .box .price{font-family:var(--mono);font-size:15px;color:var(--accent);margin:0 0 10px}
+.prose{max-width:44em}
+.prose p{margin:0 0 14px}
+pre,code{font-family:var(--mono);font-size:14px}
+pre{background:var(--paper);border:1px solid var(--soft);padding:14px;overflow-x:auto}
+.status{font-family:var(--mono);font-size:14px;border-left:3px solid var(--accent);padding:6px 0 6px 14px;max-width:44em}
+.video{aspect-ratio:16/9;width:100%;border:1px solid var(--rule);background:#000}
+footer{border-top:1px solid var(--rule);margin-top:24px;padding:28px 0 48px;font-family:var(--mono);font-size:13px;color:var(--muted)}
+footer .wrap{display:flex;flex-wrap:wrap;gap:12px 28px;justify-content:space-between}
+footer a{color:var(--ink)}
+@media (max-width:760px){
+  .hero{grid-template-columns:1fr;padding-top:28px;gap:24px}
+  section{padding:30px 0}
+}
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="https://willbearfruits.github.io/">SERIOUS S.H.I.T.</a>
+  <nav>
+    <a href="#what">What it does</a>
+    <a href="#flash">Flash it</a>
+    <a href="#get">Get one</a>
+    <a href="https://github.com/willbearfruits/twofold">Source</a>
+  </nav>
+</div></header>
+
+<main class="wrap">
+  <div class="hero">
+    <div>
+      <p class="kicker">USB sound card · ESP32-S3</p>
+      <h1>TWOFOLD</h1>
+      <p class="lead">A small USB sound card with an effects rack inside, a little screen and one knob.</p>
+      <p class="small">Plug it in and it shows up as a stereo audio interface and a MIDI port, with nothing to install. Version 1.0.2, for testers · GPL-3.0.</p>
+      <div class="actions">
+        <a class="btn solid" href="#flash">Flash it from the browser</a>
+        <a class="btn" href="editor/">Open the editor</a>
+        <a class="btn" href="https://github.com/willbearfruits/twofold">Source on GitHub</a>
+      </div>
+    </div>
+    <figure class="frame" style="margin:0">
+      <video src="img/tour.mp4" poster="img/tour-poster.png" width="816" height="432" autoplay muted loop playsinline aria-label="TWOFOLD's screen: the volume page, the EQ, then each effect in turn"></video>
+      <figcaption>The screen as the firmware draws it, run on a computer by the UI simulator.</figcaption>
+    </figure>
+  </div>
+
+  <section id="what">
+    <h2>What it does</h2>
+    <div class="grid">
+      <div class="card"><h3>No driver</h3><p>Stereo in and out at 48 kHz / 24-bit, plus a MIDI port, over one USB-C cable. It uses the audio driver already in Linux, macOS and Windows.</p></div>
+      <div class="card"><h3>Effects in the box</h3><p>Five-band EQ, saturation, chorus, delay, plate reverb and a compressor, then a limiter that keeps the output from clipping.</p></div>
+      <div class="card"><h3>One knob, one screen</h3><p>Turn for volume, press for the menus. The EQ draws its real curve over a live spectrum, and every effect has its own animation.</p></div>
+      <div class="card"><h3>An editor over the cable</h3><p>Every setting, the meters, eight presets and the MIDI map, in Chrome or Edge over USB. No WiFi, no app.</p></div>
+      <div class="card"><h3>Hear yourself at once</h3><p>Direct monitoring mixes the input into the output without the trip through the computer, dry or through the effects.</p></div>
+      <div class="card"><h3>Quiet by default</h3><p>WiFi and Bluetooth stay off until you ask for them. Every parameter has a MIDI CC; Bluetooth MIDI is there if you want it.</p></div>
+    </div>
+    <div class="prose" style="margin-top:28px">
+      <p>TWOFOLD runs on the <a href="https://github.com/willbearfruits/esp32-s3-supermini-kit">ESP32-S3 SuperMini kit</a>, the same board as <a href="https://willbearfruits.github.io/samplooler/">Samplooler</a>, the looper you play by tilting it. One built board can be flashed as either, and back again. <a href="https://github.com/willbearfruits/ring">RING</a>, a Raspberry Pi instrument, picks a TWOFOLD up automatically as its sound card when one is plugged in.</p>
+    </div>
+  </section>
+
+  <section id="screens">
+    <h2>Screens</h2>
+    <div class="shots">
+      <figure class="frame"><img src="img/ui/oled/eq_shaped.png" width="816" height="432" loading="lazy" alt="The EQ page: five bands shaping a curve over the live spectrum"><figcaption>EQ: the curve from the real filters, over the spectrum</figcaption></figure>
+      <figure class="frame"><img src="img/ui/oled/fx_reverb.png" width="816" height="432" loading="lazy" alt="The plate reverb page with its decay drawing"><figcaption>Plate reverb</figcaption></figure>
+      <figure class="frame"><img src="img/ui/oled/fx_delay.png" width="816" height="432" loading="lazy" alt="The delay page showing its echo taps"><figcaption>Delay: the taps as you set them</figcaption></figure>
+      <figure class="frame"><img src="img/ui/oled/home.png" width="816" height="432" loading="lazy" alt="The home page: volume in dB, input and output meters"><figcaption>Home: volume and meters</figcaption></figure>
+    </div>
+  </section>
+
+  <section id="flash">
+    <h2>Flash it</h2>
+    <div class="get">
+      <div class="box">
+        <h3>From the browser</h3>
+        <ol style="margin:0 0 14px;padding-left:20px">
+          <li>Use Chrome or Edge on a computer. Phones cannot do this.</li>
+          <li>Hold the board's BOOT button while you plug it in, then let go. The running firmware uses the USB port for audio, so the browser only finds the board this way.</li>
+          <li>Press the button below and pick the port.</li>
+          <li>When it says done, unplug and plug in again. It may say the device was lost; that is normal.</li>
+        </ol>
+        <esp-web-install-button manifest="flash/manifest.json">
+          <button slot="activate" class="btn solid">Connect and flash</button>
+          <span slot="unsupported">This browser cannot flash boards. Use Chrome or Edge on a computer, or flash the <a href="https://github.com/willbearfruits/twofold/releases">release file</a> with esptool.</span>
+          <span slot="not-allowed">Flashing needs a secure page (https).</span>
+        </esp-web-install-button>
+      </div>
+      <div class="box">
+        <h3>Then</h3>
+        <p>Your computer shows an audio device and a MIDI port called TWOFOLD. Pick it for input and output and set the sample rate to 48 kHz.</p>
+        <p>On the kit board the input is a microphone on the left channel: set GAIN → INPUT → LEFT to hear it in both ears.</p>
+        <p>Erasing the board first is optional. The same image is on the <a href="https://github.com/willbearfruits/twofold/releases">releases page</a>, written at offset 0x0 with esptool; the <a href="https://github.com/willbearfruits/twofold#flash-it">README</a> has the command.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="editor">
+    <h2>The editor</h2>
+    <div class="get">
+      <div class="box">
+        <h3>Over the USB cable</h3>
+        <p>Every setting, the meters, presets and the MIDI map. Open it in Chrome or Edge with TWOFOLD plugged in and press Connect over USB.</p>
+        <p>On Linux, install the <a href="https://github.com/willbearfruits/twofold/blob/main/tools/99-twofold.rules">udev rule</a> once, then replug. Windows and macOS should need nothing, but are not tested yet.</p>
+        <a class="btn solid" href="editor/">Open the editor</a>
+      </div>
+      <figure class="frame" style="margin:0"><img src="img/web/desktop_eq.png" width="1280" height="900" loading="lazy" alt="The web editor's EQ page: five draggable bands on a frequency graph"><figcaption>The editor's EQ page. With WiFi on, it also runs from the box itself and takes firmware updates.</figcaption></figure>
+    </div>
+  </section>
+
+  <section id="get">
+    <h2>Get one</h2>
+    <div class="get">
+      <div class="box">
+        <h3>Buy one</h3>
+        <p>Built by hand in Haifa. There is no list price: write and ask about price and shipping. Same board as Samplooler, so ask for either, or both.</p>
+        <a class="btn solid" href="mailto:Dogme84@gmail.com?subject=TWOFOLD">Email</a>
+        <a class="btn" href="https://wa.me/972539263808">WhatsApp</a>
+      </div>
+      <div class="box">
+        <h3>Build it in the workshop</h3>
+        <p class="price">7 meetings · MEZO, Haifa · 2,200 ₪ · kit included</p>
+        <p>Up to 8 people, with 4 hours a week of open lab between meetings. Build the ESP32 board yourself and leave with a box that runs both TWOFOLD and Samplooler.</p>
+        <a class="btn" href="https://willbearfruits.github.io/serious-shit/workshop-esp32.html">The workshop</a>
+      </div>
+      <div class="box">
+        <h3>Build it yourself</h3>
+        <p>Everything is open: firmware, editor, parts list, wiring, a case design. A board built from the kit's assembly guide runs TWOFOLD unchanged.</p>
+        <div class="actions">
+          <a class="btn" href="https://github.com/willbearfruits/twofold#hardware">Parts and wiring</a>
+          <a class="btn" href="https://github.com/willbearfruits/esp32-s3-supermini-kit/blob/main/docs/assembly/README.md">Kit guide</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="status">
+    <h2>Status</h2>
+    <p class="status">Version 1.0.2, for testers. Tested on the SuperMini board under Linux: audio in and out, MIDI, two hours of playback with no dropouts, WiFi and Bluetooth together, updates with automatic rollback.</p>
+    <p class="status" style="margin-top:12px">Not tested yet: Windows and macOS, the stereo line input (PCM1808), noise and distortion through real converters, the printed case. Reports are welcome in the <a href="https://github.com/willbearfruits/twofold/issues">issues</a>.</p>
+  </section>
+</main>
+
+<footer><div class="wrap">
+  <span>Part of <a href="https://willbearfruits.github.io/">Serious S.H.I.T.</a>: instruments, tools and workshops made in Haifa by Yaniv Schonfeld (Willbear).</span>
+  <span><a href="https://www.patreon.com/Seriousshit">Patreon</a> · <a href="https://www.instagram.com/shitisizers/">Instagram</a> · <a href="https://www.youtube.com/@Serioushit">YouTube</a> · <a href="https://github.com/willbearfruits">GitHub</a> · <a href="mailto:Dogme84@gmail.com">Email</a></span>
+</div></footer>
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+</body>
+</html>

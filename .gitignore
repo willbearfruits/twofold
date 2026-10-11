@@ -10,3 +10,10 @@ __pycache__/
 *.pyc
 .cache/
 dist/
+firmware/build-*/
+# measurement output (tools/loopback.py)
+tools/loopback_results/
+# editor / OS clutter (.clangd holds absolute local paths)
+.clangd
+.vscode/
+.DS_Store

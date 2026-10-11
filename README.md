@@ -1,9 +1,105 @@
 # TWOFOLD
 
-A minimal 2-in / 2-out USB audio interface on the ESP32-S3: class-compliant UAC2 at 48 kHz / 24-bit plus USB-MIDI,
-an onboard 32-bit float DSP chain, and a 128×64 OLED with one encoder. Radios are off by default ("Studio Mode").
+A small USB sound card with an effects rack inside, a little screen and one knob.
 
-![UI tour](docs/img/ui/tour.gif)
+![TWOFOLD's screen as the firmware draws it: the volume page, the EQ, then each effect in turn](docs/img/ui/tour.gif)
+
+**[Flash it from your browser](https://willbearfruits.github.io/twofold/#flash)** ·
+[Project page](https://willbearfruits.github.io/twofold/) ·
+[Open the editor](https://willbearfruits.github.io/twofold/editor/) · [Get one](#get-one)
+
+Plug it into a computer and it shows up as a stereo audio interface and a MIDI port, with nothing to install. Turn
+the knob for volume. Press it to shape the sound with EQ, saturation, chorus, delay, plate reverb and a compressor,
+each one drawn live on the screen. The same settings open in a web page that talks to the box over the USB cable.
+
+## What it does
+
+- **A sound card that needs no driver.** Stereo in and out at 48 kHz / 24-bit, plus a MIDI port, over one USB-C
+  cable. It uses the audio driver built into Linux, macOS and Windows 10/11. (On the kit board the input is a
+  microphone; a PCM1808 module adds a stereo line input.)
+- **Effects in the box, not in the computer.** Five-band EQ, saturation, chorus, stereo or ping-pong delay, plate
+  reverb and a compressor, then a safety limiter that keeps the output from clipping.
+- **Easier listening.** Loudness compensation keeps the bass as you turn the volume down. Headphone crossfeed takes
+  the hard edges off wide stereo mixes.
+- **Hear yourself at once.** Direct monitoring mixes the input into the output without the trip through the
+  computer, dry or through the effects.
+- **One knob, one screen.** The EQ curve is drawn from the real filters over a live spectrum, and every effect has
+  its own animation. Eight presets live on the box. (The GIF above is the firmware's own drawing code, run on a
+  computer by the UI simulator.)
+- **An editor in the browser.** Every setting, the meters, the presets and the MIDI map, in Chrome or Edge, over the
+  USB cable. No WiFi, no app.
+- **MIDI control.** Every parameter has a MIDI CC you can remap, and the knob can act as a MIDI controller.
+  Bluetooth MIDI is there if you switch it on.
+- **Quiet by default.** WiFi and Bluetooth stay completely off ("Studio Mode") until you ask for them.
+
+TWOFOLD runs on the [ESP32-S3 SuperMini kit](https://github.com/willbearfruits/esp32-s3-supermini-kit), the same board
+as [Samplooler](https://github.com/willbearfruits/samplooler), the looper you play by tilting it. One built board can
+be flashed as either, and back again. [RING](https://github.com/willbearfruits/ring), a Raspberry Pi instrument, picks a
+TWOFOLD up automatically as its sound card when one is plugged in.
+
+## Get one
+
+- **Buy one.** Built by hand in Haifa. There is no list price: write and ask, by
+  [email](mailto:Dogme84@gmail.com?subject=TWOFOLD) or [WhatsApp](https://wa.me/972539263808). It is the same board as
+  Samplooler, so ask for either, or both.
+- **Build one in the workshop.** The [ESP32 workshop](https://willbearfruits.github.io/serious-shit/workshop-esp32.html):
+  7 meetings at MEZO, Sirkin 3, Haifa · 2,200 ₪ · kit included · up to 8 people · 4 hours a week of open lab between
+  meetings. You leave with a board that runs TWOFOLD and Samplooler.
+- **Build it yourself.** Everything is open. Wire the modules from the [parts list and wiring](#hardware) below, or
+  follow the kit's [assembly guide](https://github.com/willbearfruits/esp32-s3-supermini-kit/blob/main/docs/assembly/README.md):
+  a kit board runs TWOFOLD unchanged.
+
+## Flash it
+
+You need a built board and a USB-C cable.
+
+1. **From the browser** (Chrome or Edge on a computer): hold the board's **BOOT** button while you plug it in, then
+   let go. Open the [flasher](https://willbearfruits.github.io/twofold/#flash), press **Connect and flash** and pick
+   the port. When it says done, unplug and plug in again.
+2. **Or with esptool:** download `twofold-v1.0.2-full.bin` from
+   [Releases](https://github.com/willbearfruits/twofold/releases), enter the bootloader the same way, then
+
+   ```sh
+   esptool.py --chip esp32s3 -p /dev/ttyACM0 -b 460800 write_flash 0x0 twofold-v1.0.2-full.bin
+   ```
+
+   (Windows: `COMx`; macOS: `/dev/cu.usbmodem*`.)
+
+Then:
+
+- Your computer shows an audio device and a MIDI port called **TWOFOLD**. Pick it for input and output and set the
+  sample rate to 48 kHz.
+- On the kit board the input is the INMP441 microphone, which is mono on the left channel: set
+  **GAIN → INPUT → LEFT** to hear it in both ears.
+- For the editor, open **https://willbearfruits.github.io/twofold/editor/** in Chrome or Edge and press
+  **Connect over USB**. On Linux, install the udev rule once:
+  `sudo cp tools/99-twofold.rules /etc/udev/rules.d/ && sudo udevadm control --reload`, then replug. Windows and
+  macOS should need nothing (not tested yet, see Status).
+- The one-page guide for people who get a unit: [docs/QUICKSTART.md](docs/QUICKSTART.md).
+
+Once TWOFOLD is on the board, updates need no buttons: `tools/flash.sh` asks the running firmware to reboot into
+the bootloader, or, with WiFi on, the editor's **Device → Firmware** takes the `-ota.bin` file and rolls back by
+itself if the new firmware fails.
+
+## Status
+
+Version 1.0.2, a release for testers. Tested on the ESP32-S3 SuperMini board, on Linux: USB audio in and out and
+MIDI, two hours of playback with no dropouts, WiFi and Bluetooth running together, firmware updates over WiFi with
+automatic rollback, hands-free flashing, and crash reports over USB. The DSP is checked by a test suite on a
+computer ([results](docs/test-results/dsp_tests.md)).
+
+Not tested yet: Windows and macOS (the device uses their built-in drivers, so it should work, but nobody has listened
+on them yet), the stereo line input (PCM1808) and the low-jitter clock mode, measured noise and distortion through
+real converters, and the printed case. It still uses Espressif's USB vendor ID with a placeholder product ID. The full
+list is under [Needs real hardware to confirm](#needs-real-hardware-to-confirm). Reports of builds, good or bad, are
+welcome in the issues.
+
+---
+
+## Inside
+
+A 2-in / 2-out USB audio interface on the ESP32-S3: class-compliant UAC2 at 48 kHz / 24-bit plus USB-MIDI, an
+onboard 32-bit float DSP chain, and a 128×64 OLED with one encoder. Radios are off by default ("Studio Mode").
 
 | | |
 |---|---|
@@ -16,9 +112,8 @@ an onboard 32-bit float DSP chain, and a 128×64 OLED with one encoder. Radios a
 
 Docs: [PLAN.md](PLAN.md) (architecture, clocking, budgets, every assumption and deviation) ·
 [wiring](docs/wiring.md) · [clock analysis](docs/clocking/clock_jitter.md) · [DSP test results](docs/test-results/dsp_tests.md) ·
-[UI design](docs/img/ui/) · [enclosure](docs/enclosure.md) · [web API](firmware/components/net/API.md) · [tools](tools/README.md)
-
----
+[UI design](docs/img/ui/) · [enclosure](docs/enclosure.md) · [web API](firmware/components/net/API.md) · [tools](tools/README.md) ·
+[quick start](docs/QUICKSTART.md)
 
 ## Hardware
 
@@ -53,11 +148,16 @@ All pins live in one header, [`board_config.h`](firmware/components/board/includ
 | 21 | I2S MCLK | PCM1808 SCKI (only if fitted) | 12.288 MHz, internal clock mode |
 | 48 | status LED | onboard RGB LED | |
 
-This is the same wiring as the kit / gesture-recorder builds, so an existing kit board runs TWOFOLD unchanged.
+This is the same wiring as the kit and Samplooler builds, so an existing kit board runs TWOFOLD unchanged.
 GPIO1/2/3 stay with the kit's joystick. Avoided: strapping 0/3/45/46, USB 19/20, UART0 43/44.
 The kit's input is the INMP441 microphone (mono, left slot): set **Gain → INPUT → LEFT** to hear it in both ears.
 PCM5102A SCK: **GND** in internal mode (its PLL locks to BCK), **oscillator** in low-jitter mode. XSMT is bridged high
 (set `BOARD_PIN_DAC_XSMT` to a free GPIO if you want a hardware soft-mute during boot).
+
+### Enclosure
+[`enclosure/twofold.scad`](enclosure/twofold.scad) is a parametric two-part wedge case with a knob, collision checks
+and ready STLs ([docs/enclosure.md](docs/enclosure.md)). It was drawn around the Waveshare ESP32-S3-Zero, the board
+TWOFOLD started on, and has not been printed yet. On the SuperMini kit, the board lives in the kit's own case.
 
 ## Clocking
 
@@ -77,7 +177,7 @@ The ESP32-S3 has no APLL, so I2S MCLK comes from a fractional divider. IDF 5.5 o
   and fills TinyUSB's FIFOs. OUT uses `AUDIO_FEEDBACK_METHOD_FIFO_COUNT` and IN uses level-based 47/48/49-frame
   flow control, so both loops track the real converter clock with nothing mode-specific to calibrate.
 
-## Build and flash
+## Building from source
 
 Requires ESP-IDF **v5.5.x**. Components (TinyUSB 0.21, esp-dsp, led_strip, mdns) come from the registry
 (`firmware/dependencies.lock` pins them).
@@ -110,11 +210,14 @@ enclosure/check.sh             # enclosure collision checks + STL export
 python3 tools/loopback.py --selftest          # measurement-suite self-test (synthetic device)
 ```
 
-### Releases for testers
+### Releases
 `tools/release.sh [version]` builds `dist/twofold-<version>/`: a merged image for `esptool write_flash 0x0`, the
-app-only OTA image, the editor page for USB use, the udev rule, checksums and [docs/QUICKSTART.md](docs/QUICKSTART.md)
-(the one-page guide for people who get a unit). Tag releases (`git tag -a v1.0.0`) so the version shows in ABOUT and
-`/api/info`.
+app-only OTA image, the editor page for USB use, the udev rule, checksums, `FLASH.md` and
+[docs/QUICKSTART.md](docs/QUICKSTART.md) (the one-page guide for people who get a unit). Tag releases
+(`git tag -a v1.0.0`) so the version shows in ABOUT and `/api/info`. The bundle goes to
+[GitHub Releases](https://github.com/willbearfruits/twofold/releases), not into the repository. The browser flasher
+serves its own copy of the full image from [docs/flash/](docs/flash/), and [docs/editor/](docs/editor/) holds a copy of
+the editor: update both, and `docs/flash/manifest.json`, with each release.
 
 ## Hands-free flashing, status and crash reports over USB
 `tools/flash.sh` asks the running firmware (USB-MIDI SysEx) to reboot into the ROM download mode, flashes, and starts
@@ -123,11 +226,15 @@ USB FIFO/feedback, heap and stack headroom; `tools/crash_report.sh` reads the la
 RTC memory) and symbolises it. The OLED also shows e.g. "CRASH: WIFI START" after an abnormal reset.
 
 ## The editor without WiFi
-The web editor talks to the device over its USB vendor interface too: open `firmware/components/net/web/index.html`
-from disk in Chrome/Edge (or any https host) and press **Connect over USB**. Windows installs WinUSB by itself
-(MS OS 2.0 descriptor); on Linux install `tools/99-twofold.rules` once (`sudo cp tools/99-twofold.rules
+The web editor talks to the device over its USB vendor interface too. Open
+[willbearfruits.github.io/twofold/editor/](https://willbearfruits.github.io/twofold/editor/) in Chrome or Edge (or
+`firmware/components/net/web/index.html` from disk, or any https host) and press **Connect over USB**. Windows installs
+WinUSB by itself (MS OS 2.0 descriptor); on Linux install `tools/99-twofold.rules` once (`sudo cp tools/99-twofold.rules
 /etc/udev/rules.d/ && sudo udevadm control --reload`, replug). `tools/twofold_usb.py get /api/state` does the same
-from a shell. Protocol: [API.md](firmware/components/net/API.md).
+from a shell. Firmware updates from the editor need WiFi; over USB, use the flasher or `tools/flash.sh`. Protocol:
+[API.md](firmware/components/net/API.md).
+
+![The web editor's Mix page: level meters, output, input, direct monitor and safety limiter](docs/img/web/desktop_mix.png)
 
 ## Using it
 * **Home:** turn = master volume (accelerated), press = menu, double-press = mute, long-press = back (everywhere).
@@ -166,9 +273,9 @@ Hence Studio Mode, but the hardware matters too:
 * **Firmware side:** reduced TX power, modem sleep, radios fully off by default, and the BLE/WiFi stacks on core 0.
   `tools/loopback.py --label studio/wifi --report` measures the difference (noise floor, THD+N).
 
-## Measured results (host verification)
+## Measured results
 
-**DSP** (`host/dsp_tests/run.sh`, the real engine through its public API; full table and plots in
+**DSP** (`host/dsp_tests/run.sh`, the real engine through its public API, run on a computer; full table and plots in
 [docs/test-results/dsp_tests.md](docs/test-results/dsp_tests.md)):
 
 | test | result |
@@ -217,7 +324,6 @@ prints the exact internal/PSRAM split.
 **UI:** render 6 µs/frame average on the host. All screens: [docs/img/ui/contact_sheet.png](docs/img/ui/contact_sheet.png).
 
 ## Known limitations
-* Running on the SuperMini board (USB audio + MIDI, WiFi + BLE together, SysEx service channel verified). The items under "needs hardware" are still unmeasured.
 * 48 kHz only (on the S3 PLL, 44.1 kHz would be equally fractional; OS resamplers handle it). A 96 kHz variant is on the roadmap.
 * Saturation runs at 2× oversampling to fit the CPU budget: aliasing stays at −138 to −152 dBc at musical drive (≤ 12 dB),
   but at extreme settings (24 dB drive on a −6 dBFS 9–13 kHz sine) it reaches −19 to −22 dBc. `menuconfig` → TWOFOLD DSP
@@ -232,26 +338,24 @@ prints the exact internal/PSRAM split.
   or under a brief soft-mute for explicit saves. Unplugging within ~3 s of a change, while audio is playing, can lose
   that last change.
 * OTA and WiFi credential saves soft-mute the audio while flash is written. An OTA image runs on probation
-  (bootloader rollback): it is kept only after 20 s of clean audio, otherwise the previous image returns.
+  (bootloader rollback): it is kept after 20 s of clean audio; if that has not happened within 3 minutes, or it
+  crashes, the previous image returns.
 * The VID is Espressif's (0x303A) with a placeholder PID. A product needs its own PID.
 * OpenSCAD 2021.01 flags the lid STL as possibly non-manifold (coincident faces); slicers repair it on import.
 
-## Production readiness (as of v1.0.0)
+## Needs real hardware to confirm
 Verified on the SuperMini board: USB audio in/out and MIDI on Linux, 2 h of playback with every counter at 0 (xruns,
 I2S errors), WiFi + BLE together, crash capture, hands-free flashing, OTA with rollback, the host test suite.
-Open before a wider release: Windows and macOS enumeration and listening tests, the loopback measurements (needs the
-line-input ADC), an own USB PID, a printed enclosure. Testers get `tools/release.sh` output and
-[docs/QUICKSTART.md](docs/QUICKSTART.md).
-
-## Needs real hardware to confirm
+Still open:
 1. Driverless streaming on macOS and Windows 10/11 (Linux verified: 48 kHz/24-bit async in + out, MIDI, 2 h with zero
    xruns), and hours-long drift-click-free playback measured (`tools/loopback.py --drift`). WebUSB/WinUSB on Windows and macOS.
-3. Actual internal heap at boot, and WiFi + BLE enabled together without running out of internal RAM.
-4. Loopback latency, frequency response, THD+N and noise floor, Studio Mode vs WiFi on (`tools/loopback.py`).
-5. PCM1808 slave mode with the PLL-derived MCLK, and low-jitter mode with the PCM1808 as master.
-6. OLED at 1 MHz I2C, SH1106 offset, brightness curve; encoder direction / counts per detent of your EC11.
-7. The storage policy's audio-safe windows under real use, and flash auto-suspend if your flash supports it.
-8. Enclosure fit with your modules (measure first: [checklist](docs/enclosure.md#measurement-checklist-calipers-before-printing)).
+2. Actual internal heap at boot, and WiFi + BLE enabled together without running out of internal RAM.
+3. Loopback latency, frequency response, THD+N and noise floor, Studio Mode vs WiFi on (`tools/loopback.py`; the
+   full loop needs the line-input ADC).
+4. PCM1808 slave mode with the PLL-derived MCLK, and low-jitter mode with the PCM1808 as master.
+5. OLED at 1 MHz I2C, SH1106 offset, brightness curve; encoder direction / counts per detent of your EC11.
+6. The storage policy's audio-safe windows under real use, and flash auto-suspend if your flash supports it.
+7. Enclosure fit with your modules (measure first: [checklist](docs/enclosure.md#measurement-checklist-calipers-before-printing)).
 
 ## Roadmap
 Planned build-time variants, same board, details and the USB/CPU arithmetic in PLAN.md §15:
@@ -277,10 +381,22 @@ firmware/                   ESP-IDF project (idf.py build)
   components/display        SSD1306 / SH1106 driver, dirty-band flush
   components/input          PCNT encoder + debounced switch
   components/storage        NVS with audio-safe writes
-  components/net, ble       WiFi / captive portal / web editor / OTA, BLE-MIDI
+  components/net, ble       WiFi / captive portal / web editor / OTA / USB vendor API, BLE-MIDI
   components/led            WS2812 status LED
+  components/bootdiag       crash capture across resets, served over USB-MIDI SysEx
 host/dsp_tests  host/sim  host/web_mock
-tools/                      clock_jitter.py, loopback.py, gen_wiring.py
+tools/                      clock_jitter.py, loopback.py, gen_wiring.py, release.sh, flash.sh, status and USB tools
 enclosure/                  twofold.scad, check.sh, stl/, renders/
-docs/                       wiring, clocking, test results, UI images, web screenshots, enclosure
+docs/                       wiring, clocking, test results, UI images, web screenshots, enclosure, quick start
+docs/index.html             the project page (GitHub Pages); docs/editor/ the hosted editor, docs/flash/ the flasher
 ```
+
+## Licence
+
+TWOFOLD is free software: GPL-3.0-or-later ([LICENSE](LICENSE)). That covers the firmware, the web editor, the
+tools, the enclosure and the docs. The firmware is built on ESP-IDF, TinyUSB and other Espressif components;
+[NOTICE.md](NOTICE.md) lists them and their licences.
+
+---
+Part of [Serious S.H.I.T.](https://willbearfruits.github.io/): instruments, tools and workshops made in Haifa by
+Yaniv Schonfeld (Willbear). If this is useful to you, [support it on Patreon](https://www.patreon.com/Seriousshit).
